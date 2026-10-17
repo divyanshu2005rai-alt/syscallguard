@@ -1,0 +1,15 @@
+# SyscallGuard policy
+# mode: "audit" logs WOULD_BLOCK without blocking. "enforce" blocks. Default to audit.
+mode = "audit"
+
+# Files whose readers get tagged. Absolute paths. Must exist at startup.
+protect = [
+  "/home/demo/syscallguard/demo/project/.env",
+]
+
+# Destinations a tagged process may still reach. CIDR. IPv4 and IPv6.
+# Loopback must stay allowed: the internal API mock and the DNS stub (127.0.0.53) live there.
+allow = [
+  "127.0.0.0/8",
+  "::1/128",
+]

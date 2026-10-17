@@ -1,0 +1,13 @@
+{
+  "name": "syscallguard-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SyscallGuard live dashboard (Electron)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^44.9.0"
+  }
+}

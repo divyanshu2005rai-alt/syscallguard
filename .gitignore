@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node
+node_modules/
+dist/
+out/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Logs
+*.log
+
+# Local agent config (each developer's own tool)
+CLAUDE.md
+.claude/
+# Demo secrets are FAKE and intentionally committed
+!demo/project/.env
