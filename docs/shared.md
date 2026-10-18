@@ -77,3 +77,21 @@ Template:
 **Who is affected:** Hifza, Suyash, Azaan.
 **Action required:** Suyash — keep VM paths in your local `policy/policy.toml` only. Hifza — you write `tests/test_policy.py`.
 **Commit:** contract: TAG_INHERIT name not asserted, hook C emits no ALLOW, resolve open questions
+
+### 2026-10-18 · Azaan (track K) · path
+**What changed:** New file `tests/test_events.py` (unprivileged decoder tests), owned by Divyanshu. The rest of `tests/` stays Suyash's except `tests/test_policy.py` (Hifza). AGENTS.md, README and Divyanshu's person file updated.
+**Who is affected:** Divyanshu (owns it), Suyash (`tests/` no longer entirely his).
+**Action required:** Divyanshu — put decoder tests there. Suyash — don't edit it.
+**Commit:** contract: add GUARD_STATE to bridge protocol; test_events.py ownership; editor/inode gap
+
+### 2026-10-18 · Azaan (track K) · contract
+**What changed:** Contract 4 gains a bridge message `{"v":1,"type":"GUARD_STATE","connected":bool}`. The bridge sends `connected:false` on stdin EOF (guard gone) and `connected:true` when the guard feed reconnects; `SNAPSHOT` carries the current value as `"guard_connected"`; `--fake` always reports `true`; `GUARD_STATE` is not added to `recent`. The dashboard shows two separate indicators: bridge reachable and guard feeding. Also: the `ERROR` banner is sticky until the next event (dashboard only, not a contract change).
+**Who is affected:** Divyanshu (bridge.py), Devansh (dashboard).
+**Action required:** Divyanshu — send `GUARD_STATE` and add `guard_connected` to `SNAPSHOT`. Devansh — add the guard-feeding indicator; don't log `GUARD_STATE`.
+**Commit:** contract: add GUARD_STATE to bridge protocol; test_events.py ownership; editor/inode gap
+
+### 2026-10-18 · Azaan (track K) · correction
+**What changed:** Documented a gap: the guard reads the protected file's inode once at startup, so an editor that saves by writing a new file and renaming it silently ends protection until the guard restarts. Recorded in `guard/docs/azaan.md` (known gaps) and the demo runbook rule: never edit `demo/project/.env` while the guard is running; restart the guard if you do.
+**Who is affected:** Suyash (runbook, rehearsals), everyone who edits `.env` during testing.
+**Action required:** Suyash — follow the rule in rehearsals and on stage. Others — restart the guard after editing `.env`.
+**Commit:** contract: add GUARD_STATE to bridge protocol; test_events.py ownership; editor/inode gap

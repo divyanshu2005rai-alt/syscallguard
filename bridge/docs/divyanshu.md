@@ -32,7 +32,7 @@ The bridge only relays. It never needs root, never touches the kernel and never 
 - `bridge/docs/divyanshu.md`: this file (sections 6, 9, 10 only, during development)
 - Also `guard/events.py` (see your other file)
 
-Do not edit: `guard/guard.py`, `guard/policy.py` (Hifza), `guard/bpf/` (Azaan), `dashboard/` (Devansh), `demo/`, `scripts/`, `tests/` (Suyash).
+Do not edit: `guard/guard.py`, `guard/policy.py` (Hifza), `guard/bpf/` (Azaan), `dashboard/` (Devansh), `demo/`, `scripts/`, `tests/attack_matrix.py` (Suyash).
 
 ## 4. What to build
 
@@ -58,6 +58,7 @@ python3 bridge/bridge.py --fake --port 8765             # no kernel, any OS
 - `mode`, `protect`, `allow`: from `READY` (`mode` also from each event's `mode`). Before `READY` arrives, `SNAPSHOT.mode` is `null`.
 - `tagged`: add on `TAG` / `TAG_INHERIT`, remove on `UNTAG`, keyed by `tgid`. Each entry: `tgid`, `comm`, `file`, `since` (the event's `ts`), `parent_tgid`. A repeat `TAG` for a tgid already in the set keeps the original `since`.
 - `recent`: the last 50 events (a `collections.deque(maxlen=50)`).
+- `guard_connected`: `true` while stdin is open, `false` after EOF; always `true` in `--fake`. Included in `SNAPSHOT`.
 
 **On client connect:** send one `SNAPSHOT` message first (format below), then live events.
 
@@ -69,7 +70,7 @@ python3 bridge/bridge.py --fake --port 8765             # no kernel, any OS
 
 As in the real feed, the fake `TAG_INHERIT` carries comm `python3` (the name at fork) and `curl` appears only on the `BLOCK`. The fake `ALLOW` has `hook: "connect"` (only hook B emits `ALLOW`). Fake events go through the same state and broadcast path as real ones, so `SNAPSHOT` works in fake mode too.
 
-**Errors.** A malformed (non-JSON) stdin line: skip it and log to stderr. On stdin EOF (guard gone): keep running, keep serving the last state, log to stderr. A client disconnecting mid-send must not affect other clients.
+**Errors.** A malformed (non-JSON) stdin line: skip it and log to stderr. On stdin EOF (guard gone): keep running, keep serving the last state, log to stderr, and broadcast `{"v":1,"type":"GUARD_STATE","connected":false}`. When the guard feed reconnects, broadcast the same message with `true`. `GUARD_STATE` is not added to `recent`. A client disconnecting mid-send must not affect other clients.
 
 ## 5. Contract excerpts
 
@@ -79,15 +80,16 @@ Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 4: Bridge 
 > - Keeps state: mode, protect, allow, the current tagged set (add on `TAG`/`TAG_INHERIT`, remove on `UNTAG`), and the last 50 events.
 > - When a client connects, it first sends:
 >   ```json
->   {"v":1,"type":"SNAPSHOT","mode":"enforce","protect":[...],"allow":[...],
+>   {"v":1,"type":"SNAPSHOT","mode":"enforce","guard_connected":true,"protect":[...],"allow":[...],
 >    "tagged":[{"tgid":4421,"comm":"python3","file":"...","since":1760600000.1,"parent_tgid":null}],
 >    "recent":[ ...last 50 events... ]}
 >   ```
 >   So a dashboard that restarts mid-demo recovers its full state.
 > - `--fake` loops a realistic story every ~10 s: `READY` → `TAG` (python3) → `ALLOW` 127.0.0.1:8080 → `TAG_INHERIT` (comm `python3`, the name at fork) → `BLOCK` (comm `curl`) 192.168.122.1:9999 → `UNTAG`.
+> - Guard state: the bridge sends `{"v":1,"type":"GUARD_STATE","connected":false}` to every client on stdin EOF (guard gone), and `{"v":1,"type":"GUARD_STATE","connected":true}` when the guard feed reconnects. `SNAPSHOT` carries the current value as `"guard_connected"`. `--fake` always reports `true`. `GUARD_STATE` is a bridge message, not a guard event, so it is not added to `recent`.
 > - Read-only feed. Ignore messages from clients.
 > - Never imports `bcc`. Runs unprivileged.
-> - `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running and serves the last state.
+> - `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running, serves the last state, and sends `GUARD_STATE` (below).
 
 Your input is Contract 3 (field table in ARCHITECTURE.md and in [guard/docs/divyanshu.md](../../guard/docs/divyanshu.md)). The `READY` event carries `"protect": [...]` and `"allow": [...]`.
 
@@ -132,6 +134,7 @@ sudo firewall-cmd --add-port=8765/tcp      # once, so the host laptop can connec
 |---|---|
 | Dashboard on the host can't connect | `--host 0.0.0.0` (not 127.0.0.1); VM firewall port 8765 open; right VM IP. |
 | Events appear only in bursts | guard.py isn't flushing stdout (Hifza), or you're reading stdin with a blocking call on the event loop. |
+| Dashboard still shows guard feeding after the guard died | No `GUARD_STATE` false sent on EOF, or `guard_connected` missing from `SNAPSHOT`. |
 | Bridge exits when stdin closes | It shouldn't: on EOF it keeps serving the last state. Fix that, then check the guard's stderr for why it died. |
 | `SNAPSHOT` tagged list never shrinks | `UNTAG` not removing by `tgid`, or keyed by a different type (str vs int). |
 | `ImportError: bcc` | Something imported guard code that pulls in bcc. The bridge must import nothing from `guard/`. |
@@ -156,9 +159,10 @@ Start-here prompt to paste to an agent:
 
 ## 9. Open questions
 
-- **How clients learn the guard disconnected.** Decided: on stdin EOF the bridge keeps serving the last snapshot and marks the guard as disconnected. Contract 4 has no field or message for that yet, so how the mark reaches the dashboard needs a `contract:` decision agreed with Devansh.
+- **How the guard feed "reconnects".** With `guard.py | bridge.py`, stdin can't reopen after EOF, so `GUARD_STATE` `connected: true` after a disconnect needs a way for a restarted guard to reach the running bridge (e.g. the bridge reading from a named pipe it reopens). Until that's decided, restarting the guard means restarting the pipeline, and the new bridge starts with `guard_connected: true`.
 
 ## 10. Work log
 
 - 2026-10-18: file created. Bootstrap only; `bridge.py` is a stub.
 - 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.
+- 2026-10-18: contract: added GUARD_STATE and SNAPSHOT.guard_connected (see docs/shared.md).

@@ -53,15 +53,16 @@ Do not edit: `bridge/`, `guard/events.py` (Divyanshu), `guard/guard.py`, `guard/
 - The renderer opens the WebSocket itself.
 - Auto-reconnect every 2 s on close or error.
 - On `SNAPSHOT`: **replace** all state (mode, protect, allow, tagged, recent). This is what makes a mid-demo restart recover.
+- On `GUARD_STATE`: update the guard-feeding indicator only. It is not a guard event; don't add it to the log.
 - On any other event: append to the log; update the tagged list (`TAG`/`TAG_INHERIT` add, `UNTAG` remove); update policy from `READY`.
 
 **The five panels (brief §6.4):**
 
-1. **Status banner.** Calm green "Protected"; every event type not listed here leaves it green. On `BLOCK`: loud red for 5 s with `BLOCKED: <comm> (PID <tgid>) read <file> → tried <daddr>:<dport>`. On `WOULD_BLOCK` in audit mode: amber. On `ERROR`: red, showing the event's `message` instead of the BLOCKED text. If a field is null, omit that part of the text (no `file` → drop `read <file>`).
+1. **Status banner.** Calm green "Protected"; every event type not listed here leaves it green. On `BLOCK`: loud red for 5 s with `BLOCKED: <comm> (PID <tgid>) read <file> → tried <daddr>:<dport>`. On `WOULD_BLOCK` in audit mode: amber. On `ERROR`: red, showing the event's `message` instead of the BLOCKED text, and it stays until the next event arrives (sticky, not timed). If a field is null, omit that part of the text (no `file` → drop `read <file>`).
 2. **Tagged processes.** Live list: comm, PID, file, inherited-from (`parent_tgid`), since. For inherited entries `comm` is the name at fork (usually the parent's, e.g. `python3` for a curl child); show it as-is.
 3. **Event log.** Newest first, coloured by type. Keep the newest 100 entries.
 4. **Policy panel.** Mode, protected files, allowlist (from `SNAPSHOT`/`READY`).
-5. **Connection indicator.** Bridge connected / reconnecting.
+5. **Connection indicators, two separate ones.** *Bridge reachable*: WebSocket connected / reconnecting. *Guard feeding*: from `SNAPSHOT.guard_connected`, then each `GUARD_STATE` message. While the bridge is unreachable the guard state is unknown; show it as unknown, not as feeding.
 
 **Look:** dark theme, high contrast, large type readable from 1.5 m. Plain and functional with clear hierarchy: the banner is the loudest thing, then tagged processes, then the log. No template-style gradients, glow effects or decorative animation. Colour carries meaning (green/amber/red, per-type log colours), so keep it consistent.
 
@@ -75,13 +76,14 @@ Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 4: Bridge 
 
 > - When a client connects, it first sends:
 >   ```json
->   {"v":1,"type":"SNAPSHOT","mode":"enforce","protect":[...],"allow":[...],
+>   {"v":1,"type":"SNAPSHOT","mode":"enforce","guard_connected":true,"protect":[...],"allow":[...],
 >    "tagged":[{"tgid":4421,"comm":"python3","file":"...","since":1760600000.1,"parent_tgid":null}],
 >    "recent":[ ...last 50 events... ]}
 >   ```
 >   So a dashboard that restarts mid-demo recovers its full state.
+> - Guard state: the bridge sends `{"v":1,"type":"GUARD_STATE","connected":false}` to every client on stdin EOF (guard gone), and `{"v":1,"type":"GUARD_STATE","connected":true}` when the guard feed reconnects. `SNAPSHOT` carries the current value as `"guard_connected"`. `--fake` always reports `true`. `GUARD_STATE` is a bridge message, not a guard event, so it is not added to `recent`.
 > - Read-only feed. Ignore messages from clients.
-> - `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running and serves the last state.
+> - `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running, serves the last state, and sends `GUARD_STATE` (below).
 
 Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 3: Guard CLI and JSON event schema"):
 
@@ -128,11 +130,12 @@ python3 bridge/bridge.py --fake --port 8765           # terminal 1
 cd dashboard && npm install && npm start               # terminal 2
 ```
 
-Expected: connection indicator shows connected; the policy panel fills from `SNAPSHOT`; within ~10 s the story plays: python3 tagged, an ALLOW to 127.0.0.1:8080, a child tagged with inherited-from (comm `python3`, the name at fork), banner red for 5 s on the BLOCK by `curl` to 192.168.122.1:9999, then UNTAG clears the list.
+Expected: both indicators show connected/feeding; the policy panel fills from `SNAPSHOT`; within ~10 s the story plays: python3 tagged, an ALLOW to 127.0.0.1:8080, a child tagged with inherited-from (comm `python3`, the name at fork), banner red for 5 s on the BLOCK by `curl` to 192.168.122.1:9999, then UNTAG clears the list.
 
 Acceptance checks:
 
 - Kill the bridge: the indicator shows reconnecting; restart it: reconnects within ~2 s.
+- Guard gone: pipe a single line into the bridge (`printf '...' | python3 bridge/bridge.py`); after EOF the guard indicator shows not feeding while the bridge indicator stays connected.
 - Quit and restart Electron mid-story: state comes back from `SNAPSHOT`.
 - Browser fallback: open `dashboard/renderer/index.html?bridge=ws://127.0.0.1:8765` in Firefox/Chrome.
 
@@ -173,10 +176,10 @@ Start-here prompt to paste to an agent:
 
 ## 9. Open questions
 
-- **How long the `ERROR` banner stays red** is not specified (`BLOCK` is 5 s).
-- **Guard-disconnected indicator.** The bridge will mark the guard as disconnected on EOF, but Contract 4 doesn't say how yet. See Divyanshu's bridge file.
+None open. Resolved 18 Oct: `ERROR` banner is sticky until the next event; guard state arrives via `GUARD_STATE` and `SNAPSHOT.guard_connected` (Contract 4).
 
 ## 10. Work log
 
 - 2026-10-18: file created. Bootstrap only; dashboard files are stubs.
 - 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.
+- 2026-10-18: ERROR banner sticky; two indicators (bridge reachable, guard feeding) via GUARD_STATE (see docs/shared.md).

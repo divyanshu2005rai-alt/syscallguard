@@ -39,7 +39,7 @@ dashboard/           Electron app: package.json, main.js, preload.js, renderer/
 dashboard/docs/      devansh.md
 demo/                agent.py, internal_api.py, attacker.py, reset.sh, project/
 demo/docs/           suyash.md (also covers scripts/ and tests/)
-tests/               test_policy.py (unprivileged), attack_matrix.py (root, VM)
+tests/               test_policy.py, test_events.py (unprivileged), attack_matrix.py (root, VM)
 scripts/             check_env.sh, lsm_smoke_test.py
 ```
 
@@ -51,9 +51,9 @@ Person files: [guard/docs/azaan.md](guard/docs/azaan.md), [guard/docs/hifza.md](
 |---|---|---|
 | Azaan | K — kernel enforcement | guard/bpf/ |
 | Hifza | G1 — guard core | guard/guard.py, guard/policy.py, tests/test_policy.py |
-| Divyanshu | G2 — events and bridge | guard/events.py, bridge/ |
+| Divyanshu | G2 — events and bridge | guard/events.py, bridge/, tests/test_events.py |
 | Devansh | U — dashboard | dashboard/ |
-| Suyash | D — demo and verification; P — presentation | demo/, scripts/, tests/ (except test_policy.py), docs/presentation/ |
+| Suyash | D — demo and verification; P — presentation | demo/, scripts/, tests/ (except test_policy.py, test_events.py), docs/presentation/ |
 
 `policy/` has no single owner: Hifza owns the schema and validation, Suyash owns keeping the example file correct for the VM. Track P (presentation) is Suyash's second hat: five people, five tracks, and the runbook is already his. Reassign P if someone is genuinely free.
 
@@ -75,10 +75,10 @@ The ten sections, in order: 1. Your part, in plain words · 2. Where it sits · 
 | Track | Owns | Delivers |
 |---|---|---|
 | **K: Kernel enforcement** | `guard/bpf/` | Hooks A–E, maps, event emission, verifier-clean load |
-| **G: Guard runtime & bridge** | `guard/*.py`, `bridge/`, `policy/`, `tests/test_policy.py` | Policy parsing, BPF load/attach via bcc, map population, ring-buffer decode → JSON, bridge with snapshot + `--fake` |
+| **G: Guard runtime & bridge** | `guard/*.py`, `bridge/`, `policy/`, `tests/test_policy.py`, `tests/test_events.py` | Policy parsing, BPF load/attach via bcc, map population, ring-buffer decode → JSON, bridge with snapshot + `--fake` |
 | **D: Demo kit & verification** | `demo/`, `scripts/`, `tests/attack_matrix.py`, `docs/presentation/demo-runbook.md` | Agent simulator, internal API, attacker, reset, env checks, attack matrix, VM networking, integration runs, VM snapshot |
 | **U: Dashboard** | `dashboard/` | Electron app per ARCHITECTURE.md |
-| **P: Presentation** | `docs/presentation/` (runbook co-owned with D), deck, poster | Talk track, judge Q&A upkeep, poster/standee, backup video (with D), rehearsal schedule |
+| **P: Presentation** | `docs/presentation/` (runbook co-owned with D), deck, poster | Talk track, judge Q&A upkeep, poster/standee, backup video (Suyash records, Azaan verifies), rehearsal schedule |
 
 Rules:
 
@@ -134,6 +134,7 @@ demo/reset.sh
 
 # Tests
 python3 -m unittest tests/test_policy.py                     # unprivileged, anywhere
+python3 -m unittest tests/test_events.py                     # unprivileged, anywhere
 sudo python3 tests/attack_matrix.py --target 192.168.122.1:9999   # VM only
 ```
 

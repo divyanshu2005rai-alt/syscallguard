@@ -39,7 +39,7 @@ Your files: `attacker.py` (host), `agent.py`, `internal_api.py`, `reset.sh`, `pr
 - `policy/policy.example.toml`: keeping it correct for the VM (Hifza owns the schema)
 - `demo/docs/suyash.md`: this file (sections 6, 9, 10 only, during development)
 
-Do not edit: `tests/test_policy.py` (Hifza), `guard/` (Azaan, Hifza, Divyanshu), `bridge/` (Divyanshu), `dashboard/` (Devansh).
+Do not edit: `tests/test_policy.py` (Hifza), `tests/test_events.py` (Divyanshu), `guard/` (Azaan, Hifza, Divyanshu), `bridge/` (Divyanshu), `dashboard/` (Devansh).
 
 ## 4. What to build
 
@@ -173,6 +173,8 @@ demo/reset.sh                                                          # starts 
 
 **Track P duties:** talk track (`docs/presentation/talk-track.md`), judge Q&A upkeep (`docs/presentation/judge-qa.md`), deck, poster/standee, rehearsal schedule.
 
+**Never edit `demo/project/.env` while the guard is running.** An editor save can give the file a new inode and silently end protection. If you do edit it, restart the guard.
+
 **Between runs:** `demo/reset.sh`. For a cold run, revert the VM snapshot.
 
 **Judges** may try rows from the "Blocked" table only (other `--exfil` modes, other ports, base64), never native IPv6 (not set up). **Never invite pipes** (`cat .env | curl ...`): that's a known gap.
@@ -206,3 +208,4 @@ None open. Resolved 18 Oct (see docs/shared.md): `tests/test_policy.py` is Hifza
 
 - 2026-10-18: file created. `.env`, poisoned README, `check_env.sh`, `lsm_smoke_test.py` complete from bootstrap; the rest are stubs.
 - 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.
+- 2026-10-18: runbook rule: never edit .env while the guard runs; test_events.py is Divyanshu's (see docs/shared.md).

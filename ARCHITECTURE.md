@@ -211,15 +211,16 @@ python3 bridge/bridge.py --fake --port 8765        # no kernel, any OS
 - Keeps state: mode, protect, allow, the current tagged set (add on `TAG`/`TAG_INHERIT`, remove on `UNTAG`), and the last 50 events.
 - When a client connects, it first sends:
   ```json
-  {"v":1,"type":"SNAPSHOT","mode":"enforce","protect":[...],"allow":[...],
+  {"v":1,"type":"SNAPSHOT","mode":"enforce","guard_connected":true,"protect":[...],"allow":[...],
    "tagged":[{"tgid":4421,"comm":"python3","file":"...","since":1760600000.1,"parent_tgid":null}],
    "recent":[ ...last 50 events... ]}
   ```
   So a dashboard that restarts mid-demo recovers its full state.
 - `--fake` loops a realistic story every ~10 s: `READY` → `TAG` (python3) → `ALLOW` 127.0.0.1:8080 → `TAG_INHERIT` (comm `python3`, the name at fork) → `BLOCK` (comm `curl`) 192.168.122.1:9999 → `UNTAG`.
+- Guard state: the bridge sends `{"v":1,"type":"GUARD_STATE","connected":false}` to every client on stdin EOF (guard gone), and `{"v":1,"type":"GUARD_STATE","connected":true}` when the guard feed reconnects. `SNAPSHOT` carries the current value as `"guard_connected"`. `--fake` always reports `true`. `GUARD_STATE` is a bridge message, not a guard event, so it is not added to `recent`.
 - Read-only feed. Ignore messages from clients.
 - Never imports `bcc`. Runs unprivileged.
-- `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running and serves the last state.
+- `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running, serves the last state, and sends `GUARD_STATE` (below).
 
 ---
 
@@ -228,7 +229,7 @@ python3 bridge/bridge.py --fake --port 8765        # no kernel, any OS
 - `main.js`: one `BrowserWindow`, `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`. Supports `--kiosk`/fullscreen. Bridge URL from `SG_BRIDGE_URL` env var or `--bridge=ws://...` (default `ws://127.0.0.1:8765`), passed to the renderer via `preload.js` (`contextBridge`).
 - The renderer opens the WebSocket itself. Content-Security-Policy allows `connect-src ws: wss:` and nothing remote otherwise.
 - The renderer also works opened directly in a browser: with no preload value it reads `?bridge=` from the URL.
-- Panels: status banner (green "Protected"; red for 5 s on `BLOCK`; amber on `WOULD_BLOCK`), tagged processes, event log (newest first), policy panel, connection indicator (auto-reconnect every 2 s).
+- Panels: status banner (green "Protected"; red for 5 s on `BLOCK`; amber on `WOULD_BLOCK`), tagged processes, event log (newest first), policy panel, two connection indicators: bridge reachable (auto-reconnect every 2 s) and guard feeding (`GUARD_STATE`).
 - Readable from 1.5 m: large type, high contrast, dark theme. Show real fields only.
 
 ## Design decisions

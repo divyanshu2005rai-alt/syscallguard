@@ -25,10 +25,11 @@ Your output is exactly what Devansh's dashboard shows on screen. The JSON schema
 ## 3. Files you own
 
 - `guard/events.py`: the decoder
+- `tests/test_events.py`: decoder unit tests (unprivileged, hand-packed bytes, no VM)
 - `guard/docs/divyanshu.md`: this file (sections 6, 9, 10 only, during development)
 - Also `bridge/` (see your other file)
 
-Do not edit: `guard/bpf/` including `sg_common.h` (Azaan; struct changes go through a `contract:` commit), `guard/guard.py`, `guard/policy.py` (Hifza), `dashboard/` (Devansh), `demo/`, `scripts/`, `tests/` (Suyash).
+Do not edit: `guard/bpf/` including `sg_common.h` (Azaan; struct changes go through a `contract:` commit), `guard/guard.py`, `guard/policy.py` (Hifza), `dashboard/` (Devansh), `demo/`, `scripts/`, `tests/attack_matrix.py` (Suyash).
 
 ## 4. What to build
 
@@ -152,7 +153,9 @@ Do the bridge's `--fake` mode first (it unblocks Devansh today), then this.
 
 ## 7. How to run and test your part
 
-No VM needed. Pack a fake event and decode it:
+No VM needed. Your tests live in `tests/test_events.py`: `python3 -m unittest tests/test_events.py`.
+
+Quick manual check, pack a fake event and decode it:
 
 ```bash
 python3 - <<'EOF'
@@ -198,9 +201,10 @@ Start-here prompt to paste to an agent:
 
 ## 9. Open questions
 
-- **No test file is assigned for `events.py`.** `tests/test_policy.py` is Hifza's and the rest of `tests/` is Suyash's; decide whether a decoder test lives in `tests/` or as a self-check in `events.py`.
+None open. Resolved 18 Oct: decoder tests live in `tests/test_events.py`, which you own.
 
 ## 10. Work log
 
 - 2026-10-18: file created. Bootstrap only; `events.py` is a stub.
 - 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.
+- 2026-10-18: you now own tests/test_events.py (see docs/shared.md).

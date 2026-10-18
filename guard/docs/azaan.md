@@ -62,6 +62,11 @@ All in `guard/bpf/syscallguard.bpf.c`, compiled by bcc at load time. `#include "
 - Match on inode number only (`i_ino`). Collisions across filesystems are an accepted risk (ARCHITECTURE.md, Design decisions); don't add device matching unasked.
 - LSM, tracepoint and raw-tracepoint probes auto-attach when bcc loads them. You don't attach anything by hand.
 
+### Known gaps (documented, don't fix silently)
+
+- **Editor replaces the protected file.** The guard reads `st_ino` once at startup. An editor that saves by writing a new file and renaming it over `.env` gives it a new inode, so the guard silently stops protecting it until restarted. Not handled. Demo rule (in the runbook): never edit `.env` while the guard is running; restart the guard if you do.
+- The other known gaps are listed in ARCHITECTURE.md, "Known gaps".
+
 ## 5. Contract excerpts
 
 Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 1: Kernel structs and maps"):
@@ -192,9 +197,10 @@ Start-here prompt to paste to an agent:
 
 ## 9. Open questions
 
-- **Editors replacing the file.** If `.env` is saved via write-to-new-file-and-rename, its inode changes and the guard (which read `st_ino` at startup) stops protecting it until restarted. Not specified whether this needs handling.
+None open. The editor/inode issue is now a documented known gap (section 4).
 
 ## 10. Work log
 
 - 2026-10-18: file created. Bootstrap only; no kernel code yet.
 - 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.
+- 2026-10-18: editor/inode issue documented as a known gap; runbook rule added (see docs/shared.md).

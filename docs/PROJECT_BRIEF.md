@@ -61,7 +61,7 @@ This is deliberately **not** "no network at all." The agent must keep working wi
 | Tagged process spawns `curl` / `nc` / `python` carrying the data | Hook D inheritance, then Hook B/C |
 | Base64 / any encoding | Content is never inspected; the process is tagged |
 | Any port | Allowlist is by address |
-| IPv6 and IPv4-mapped IPv6 | Hooks B/C |
+| IPv6 and IPv4-mapped IPv6 | Hooks B/C handle it; not tested on the demo VM (no v6 route); IPv4-mapped IPv6 is tested |
 | UDP `sendto()` | Hook C |
 | Socket connected *before* reading the secret, then `send()` | Hook C checks the connected peer |
 
@@ -362,15 +362,16 @@ python3 bridge/bridge.py --fake --port 8765        # no kernel, any OS
 - Keeps state: mode, protect, allow, the current tagged set (add on `TAG`/`TAG_INHERIT`, remove on `UNTAG`), and the last 50 events.
 - When a client connects, it first sends:
   ```json
-  {"v":1,"type":"SNAPSHOT","mode":"enforce","protect":[...],"allow":[...],
+  {"v":1,"type":"SNAPSHOT","mode":"enforce","guard_connected":true,"protect":[...],"allow":[...],
    "tagged":[{"tgid":4421,"comm":"python3","file":"...","since":1760600000.1,"parent_tgid":null}],
    "recent":[ ...last 50 events... ]}
   ```
   So a dashboard that restarts mid-demo recovers its full state.
 - `--fake` loops a realistic story every ~10 s: `READY` → `TAG` (python3) → `ALLOW` 127.0.0.1:8080 → `TAG_INHERIT` (comm `python3`, the name at fork) → `BLOCK` (comm `curl`) 192.168.122.1:9999 → `UNTAG`.
+- Guard state: the bridge sends `{"v":1,"type":"GUARD_STATE","connected":false}` to every client on stdin EOF (guard gone), and `{"v":1,"type":"GUARD_STATE","connected":true}` when the guard feed reconnects. `SNAPSHOT` carries the current value as `"guard_connected"`. `--fake` always reports `true`. `GUARD_STATE` is a bridge message, not a guard event, so it is not added to `recent`.
 - Read-only feed. Ignore messages from clients.
 - Never imports `bcc`. Runs unprivileged.
-- `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running and serves the last state.
+- `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running, serves the last state, and sends `GUARD_STATE` (below).
 
 ### 5.6 Demo kit (`demo/`, Track D)
 
@@ -462,7 +463,7 @@ python3 bridge/bridge.py --fake --port 8765        # no kernel, any OS
   2. Tagged processes: live list (comm, PID, file, inherited-from, since).
   3. Event log: newest first, colour by type.
   4. Policy panel: mode, protected files, allowlist (from `SNAPSHOT`/`READY`).
-  5. Connection indicator: bridge connected / reconnecting (auto-reconnect every 2 s).
+  5. Connection indicators, two separate ones: bridge reachable (connected / reconnecting, auto-reconnect every 2 s) and guard feeding (from `SNAPSHOT.guard_connected` and `GUARD_STATE`).
 - Readable from 1.5 m: large type, high contrast, dark theme.
 - Show real fields only. Never fake or animate data that didn't arrive.
 
@@ -493,7 +494,7 @@ Five people. Each track owns its paths. Contracts in `ARCHITECTURE.md` are share
 | **G: Guard runtime & bridge** | `guard/*.py`, `bridge/`, `policy/`, `tests/test_policy.py` | Policy parsing, BPF load/attach via bcc, map population, ring-buffer decode → JSON, bridge with snapshot + `--fake` |
 | **D: Demo kit & verification** | `demo/`, `scripts/`, `tests/attack_matrix.py`, `docs/presentation/demo-runbook.md` | Agent simulator, internal API, attacker, reset, env checks, attack matrix, VM networking, integration runs, VM snapshot |
 | **U: Dashboard** | `dashboard/` | Electron app per §6.4 |
-| **P: Presentation** | `docs/presentation/` (except runbook co-owned with D), deck, poster | Talk track, judge Q&A upkeep, poster/standee, backup video (with D), rehearsal schedule |
+| **P: Presentation** | `docs/presentation/` (except runbook co-owned with D), deck, poster | Talk track, judge Q&A upkeep, poster/standee, backup video (Suyash records, Azaan verifies), rehearsal schedule |
 
 Dependency order: G's loader is needed to test K's hooks, so K and G pair closely; agree on Contract 1 first. U and P are unblocked from day one via `bridge.py --fake`. D is unblocked from day one for demo servers and scripts.
 
