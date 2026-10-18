@@ -197,10 +197,13 @@ Start-here prompt to paste to an agent:
 
 ## 9. Open questions
 
-None open. The editor/inode issue is now a documented known gap (section 4).
+- **Loader cflags need `-fms-extensions`.** Kernel 7.x headers embed anonymous tagged structs (`struct __filename_head;` inside `struct filename` in `linux/fs.h`), a Microsoft C extension the kernel builds with. Without the flag bcc's clang drops the member, so `static_assert(sizeof(struct filename) % 64 == 0)` fails, and any struct using the extension would get wrong offsets. Verified on the host: compile fails without the flag and succeeds with it (7.2.9 headers). ARCHITECTURE.md and the brief still say `cflags=["-I<abs path to guard/bpf>"]` only. Needs a `contract:` commit once the VM run confirms. Hifza notified via docs/shared.md.
+- **bpftool name for `protected_inodes`.** Kernel map names are capped at 15 characters, so the map is probably visible as `protected_inode`, and `bpftool map dump name protected_inodes` (section 7, and Hifza's troubleshooting table) would fail. Confirm in the VM.
 
 ## 10. Work log
 
 - 2026-10-18: file created. Bootstrap only; no kernel code yet.
 - 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.
 - 2026-10-18: editor/inode issue documented as a known gap; runbook rule added (see docs/shared.md).
+- 2026-10-19: M0 passed in the VM (check_env all PASS, lsm_smoke_test OK, kernel 7.2.10-200.fc44). Box is Suyash's, not ticked here.
+- 2026-10-19: hook A (file_open tagging) and all six Contract 1 maps written; compiles against 7.2.9 headers with -fms-extensions; throwaway loader in scratch/azaan/. M1 acceptance pending in the VM.

@@ -101,3 +101,9 @@ Template:
 **Who is affected:** Divyanshu (bridge.py), Devansh (guard-feeding indicator only goes back to true via a new `SNAPSHOT` after the pipeline restarts), Suyash (runbook).
 **Action required:** Divyanshu — don't implement a reconnect path. Suyash — never restart `guard.py` alone; restart the pipeline.
 **Commit:** contract: GUARD_STATE has no reconnect; restart means whole pipeline
+
+### 2026-10-19 · Azaan (track K) · correction
+**What changed:** The BPF program needs `-fms-extensions` in bcc's cflags. Kernel 7.x headers use anonymous tagged struct members (`struct __filename_head;` in `struct filename`, `linux/fs.h`), which clang only accepts with that flag. Without it, compiling `guard/bpf/syscallguard.bpf.c` fails on `static_assert(sizeof(struct filename) % 64 == 0)`, and any such struct would get wrong field offsets. The documented load call `BPF(src_file=..., cflags=["-I<abs path to guard/bpf>"])` (ARCHITECTURE.md implementation notes, brief 5.2, guard/docs/hifza.md) is therefore incomplete. Verified on a host compile against 7.2.9 headers; VM confirmation pending in the M1 run, after which ARCHITECTURE.md/brief get a `contract:` update.
+**Who is affected:** Hifza (`guard/guard.py` load call).
+**Action required:** Hifza — load with `cflags=["-I" + <abs path to guard/bpf>, "-fms-extensions"]`.
+**Commit:** feat(kernel): M1 hook A file_open tagging
