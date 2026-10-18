@@ -125,6 +125,20 @@ cd dashboard && npm install && npm start
 - **U**: Dashboard
 - **P**: Presentation
 
+## Who works where
+
+New here, human or AI agent? Start with [AGENTS.md](AGENTS.md). It is the entry point and links to everything else.
+
+| Person | Track | Owns | Person file(s) |
+|---|---|---|---|
+| Azaan | K — kernel enforcement | guard/bpf/ | [guard/docs/azaan.md](guard/docs/azaan.md) |
+| Hifza | G1 — guard core | guard/guard.py, guard/policy.py | [guard/docs/hifza.md](guard/docs/hifza.md), [policy/docs/hifza.md](policy/docs/hifza.md) |
+| Divyanshu | G2 — events and bridge | guard/events.py, bridge/ | [guard/docs/divyanshu.md](guard/docs/divyanshu.md), [bridge/docs/divyanshu.md](bridge/docs/divyanshu.md) |
+| Devansh | U — dashboard | dashboard/ | [dashboard/docs/devansh.md](dashboard/docs/devansh.md) |
+| Suyash | D — demo and verification | demo/, scripts/, tests/ | [demo/docs/suyash.md](demo/docs/suyash.md), [policy/docs/suyash.md](policy/docs/suyash.md) |
+
+`policy/` has no single owner: Hifza owns the schema and validation, Suyash owns keeping the example file correct for the VM. Cross-track changes are logged in [docs/shared.md](docs/shared.md).
+
 ## More
 
 - [docs/PRD.md](docs/PRD.md): product document

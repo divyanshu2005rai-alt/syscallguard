@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## Start here
+
+Every agent and developer, every session, in this order:
+
+1. Read [docs/shared.md](docs/shared.md). Entries since you last worked may affect you.
+2. Read your person file: `<folder>/docs/<your-name>.md` (see "Who owns what" below).
+3. Read [ARCHITECTURE.md](ARCHITECTURE.md) for any contract you touch.
+4. [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) is the full design, and wins over `docs/PRD.md` where they differ.
+
 > **Claude Code users:** create a local `CLAUDE.md` containing the line `@AGENTS.md`. It's gitignored.
 
 Rules for every AI coding agent (Claude Code, Codex, Cursor, Gemini CLI, Copilot) and every developer on this repo.
@@ -18,16 +27,48 @@ Full design: [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md). Interfaces: [ARCHIT
 
 ```
 README.md, AGENTS.md, ARCHITECTURE.md
-docs/                PROJECT_BRIEF.md, PRD.md, presentation/
+docs/                PROJECT_BRIEF.md, PRD.md, shared.md (cross-track change log), presentation/
 policy/              policy.example.toml
+policy/docs/         hifza.md, suyash.md
 guard/               guard.py, policy.py, events.py
 guard/bpf/           sg_common.h, syscallguard.bpf.c
+guard/docs/          azaan.md, hifza.md, divyanshu.md
 bridge/              bridge.py
+bridge/docs/         divyanshu.md
 dashboard/           Electron app: package.json, main.js, preload.js, renderer/
+dashboard/docs/      devansh.md
 demo/                agent.py, internal_api.py, attacker.py, reset.sh, project/
+demo/docs/           suyash.md (also covers scripts/ and tests/)
 tests/               test_policy.py (unprivileged), attack_matrix.py (root, VM)
 scripts/             check_env.sh, lsm_smoke_test.py
 ```
+
+Person files: [guard/docs/azaan.md](guard/docs/azaan.md), [guard/docs/hifza.md](guard/docs/hifza.md), [guard/docs/divyanshu.md](guard/docs/divyanshu.md), [bridge/docs/divyanshu.md](bridge/docs/divyanshu.md), [dashboard/docs/devansh.md](dashboard/docs/devansh.md), [demo/docs/suyash.md](demo/docs/suyash.md), [policy/docs/hifza.md](policy/docs/hifza.md), [policy/docs/suyash.md](policy/docs/suyash.md). Shared log: [docs/shared.md](docs/shared.md).
+
+## Who owns what
+
+| Person | Track | Owns |
+|---|---|---|
+| Azaan | K — kernel enforcement | guard/bpf/ |
+| Hifza | G1 — guard core | guard/guard.py, guard/policy.py |
+| Divyanshu | G2 — events and bridge | guard/events.py, bridge/ |
+| Devansh | U — dashboard | dashboard/ |
+| Suyash | D — demo and verification | demo/, scripts/, tests/ |
+
+`policy/` has no single owner: Hifza owns the schema and validation, Suyash owns keeping the example file correct for the VM.
+
+## Documentation duty for agents
+
+- Update **only** your own person file, and only sections 6, 9 and 10 (milestone checkboxes, open questions, work log). Do not rewrite sections 1 to 8 unless the design genuinely changed and the user asked for it.
+- Tick a milestone box only when its acceptance command actually passed. Never tick on "should work".
+- Add a work-log line at the end of each session.
+- Record ambiguity under Open questions rather than guessing.
+- If your change affects another track, add an entry to [docs/shared.md](docs/shared.md). **Do not edit another person's file.** The shared log is how the news travels; their agent reads it next session.
+- A `contract:` commit must include its `docs/shared.md` entry in the same commit.
+
+**New-folder rule:** if you start work in a folder where you have no person file, create `<folder>/docs/<your-name>.md` using the same ten sections, and note it in `docs/shared.md`.
+
+The ten sections, in order: 1. Your part, in plain words · 2. Where it sits · 3. Files you own · 4. What to build · 5. Contract excerpts · 6. Your milestones · 7. How to run and test your part · 8. Working with AI agents · 9. Open questions · 10. Work log.
 
 ## Tracks and ownership
 
@@ -54,7 +95,7 @@ The four contracts in [ARCHITECTURE.md](ARCHITECTURE.md) are the interfaces betw
 3. Guard CLI and JSON event schema
 4. Bridge WebSocket protocol
 
-Changing a contract means updating `ARCHITECTURE.md` **and** `guard/bpf/sg_common.h` (if affected) in the same commit, with a commit message starting `contract:`. Tell the other tracks.
+Changing a contract means updating `ARCHITECTURE.md` **and** `guard/bpf/sg_common.h` (if affected) in the same commit, with a commit message starting `contract:`. Tell the other tracks by adding a `docs/shared.md` entry in that same commit.
 
 ## Safety rules
 
