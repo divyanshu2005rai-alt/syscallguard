@@ -126,6 +126,7 @@ syscallguard/
 │   └── reset.sh                    (stub)
 ├── tests/
 │   ├── test_policy.py              (stub)  unprivileged unit tests
+│   ├── test_events.py              (new)   unprivileged decoder tests, Track G (Divyanshu)
 │   └── attack_matrix.py            (stub)  privileged end-to-end matrix
 └── scripts/
     ├── check_env.sh                (complete)  Part 5.7
@@ -368,7 +369,7 @@ python3 bridge/bridge.py --fake --port 8765        # no kernel, any OS
   ```
   So a dashboard that restarts mid-demo recovers its full state.
 - `--fake` loops a realistic story every ~10 s: `READY` → `TAG` (python3) → `ALLOW` 127.0.0.1:8080 → `TAG_INHERIT` (comm `python3`, the name at fork) → `BLOCK` (comm `curl`) 192.168.122.1:9999 → `UNTAG`.
-- Guard state: the bridge sends `{"v":1,"type":"GUARD_STATE","connected":false}` to every client on stdin EOF (guard gone), and `{"v":1,"type":"GUARD_STATE","connected":true}` when the guard feed reconnects. `SNAPSHOT` carries the current value as `"guard_connected"`. `--fake` always reports `true`. `GUARD_STATE` is a bridge message, not a guard event, so it is not added to `recent`.
+- Guard state: the bridge sends `{"v":1,"type":"GUARD_STATE","connected":false}` to every client on stdin EOF (guard gone). It stays `false`: stdin can't reopen, so restarting the guard means restarting the whole `guard.py | bridge.py` pipeline, and the new bridge starts with `true`. `SNAPSHOT` carries the current value as `"guard_connected"`. `--fake` always reports `true`. `GUARD_STATE` is a bridge message, not a guard event, so it is not added to `recent`.
 - Read-only feed. Ignore messages from clients.
 - Never imports `bcc`. Runs unprivileged.
 - `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running, serves the last state, and sends `GUARD_STATE` (below).
@@ -491,7 +492,7 @@ Five people. Each track owns its paths. Contracts in `ARCHITECTURE.md` are share
 | Track | Owns | Delivers |
 |---|---|---|
 | **K: Kernel enforcement** | `guard/bpf/` | Hooks A–E, maps, event emission, verifier-clean load |
-| **G: Guard runtime & bridge** | `guard/*.py`, `bridge/`, `policy/`, `tests/test_policy.py` | Policy parsing, BPF load/attach via bcc, map population, ring-buffer decode → JSON, bridge with snapshot + `--fake` |
+| **G: Guard runtime & bridge** | `guard/*.py`, `bridge/`, `policy/`, `tests/test_policy.py`, `tests/test_events.py` | Policy parsing, BPF load/attach via bcc, map population, ring-buffer decode → JSON, bridge with snapshot + `--fake` |
 | **D: Demo kit & verification** | `demo/`, `scripts/`, `tests/attack_matrix.py`, `docs/presentation/demo-runbook.md` | Agent simulator, internal API, attacker, reset, env checks, attack matrix, VM networking, integration runs, VM snapshot |
 | **U: Dashboard** | `dashboard/` | Electron app per §6.4 |
 | **P: Presentation** | `docs/presentation/` (except runbook co-owned with D), deck, poster | Talk track, judge Q&A upkeep, poster/standee, backup video (Suyash records, Azaan verifies), rehearsal schedule |

@@ -70,7 +70,7 @@ python3 bridge/bridge.py --fake --port 8765             # no kernel, any OS
 
 As in the real feed, the fake `TAG_INHERIT` carries comm `python3` (the name at fork) and `curl` appears only on the `BLOCK`. The fake `ALLOW` has `hook: "connect"` (only hook B emits `ALLOW`). Fake events go through the same state and broadcast path as real ones, so `SNAPSHOT` works in fake mode too.
 
-**Errors.** A malformed (non-JSON) stdin line: skip it and log to stderr. On stdin EOF (guard gone): keep running, keep serving the last state, log to stderr, and broadcast `{"v":1,"type":"GUARD_STATE","connected":false}`. When the guard feed reconnects, broadcast the same message with `true`. `GUARD_STATE` is not added to `recent`. A client disconnecting mid-send must not affect other clients.
+**Errors.** A malformed (non-JSON) stdin line: skip it and log to stderr. On stdin EOF (guard gone): keep running, keep serving the last state, log to stderr, and broadcast `{"v":1,"type":"GUARD_STATE","connected":false}`. It stays `false`; there is no reconnect. Restarting the guard means restarting the whole pipeline. `GUARD_STATE` is not added to `recent`. A client disconnecting mid-send must not affect other clients.
 
 ## 5. Contract excerpts
 
@@ -86,7 +86,7 @@ Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 4: Bridge 
 >   ```
 >   So a dashboard that restarts mid-demo recovers its full state.
 > - `--fake` loops a realistic story every ~10 s: `READY` → `TAG` (python3) → `ALLOW` 127.0.0.1:8080 → `TAG_INHERIT` (comm `python3`, the name at fork) → `BLOCK` (comm `curl`) 192.168.122.1:9999 → `UNTAG`.
-> - Guard state: the bridge sends `{"v":1,"type":"GUARD_STATE","connected":false}` to every client on stdin EOF (guard gone), and `{"v":1,"type":"GUARD_STATE","connected":true}` when the guard feed reconnects. `SNAPSHOT` carries the current value as `"guard_connected"`. `--fake` always reports `true`. `GUARD_STATE` is a bridge message, not a guard event, so it is not added to `recent`.
+> - Guard state: the bridge sends `{"v":1,"type":"GUARD_STATE","connected":false}` to every client on stdin EOF (guard gone). It stays `false`: stdin can't reopen, so restarting the guard means restarting the whole `guard.py | bridge.py` pipeline, and the new bridge starts with `true`. `SNAPSHOT` carries the current value as `"guard_connected"`. `--fake` always reports `true`. `GUARD_STATE` is a bridge message, not a guard event, so it is not added to `recent`.
 > - Read-only feed. Ignore messages from clients.
 > - Never imports `bcc`. Runs unprivileged.
 > - `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running, serves the last state, and sends `GUARD_STATE` (below).
@@ -159,10 +159,11 @@ Start-here prompt to paste to an agent:
 
 ## 9. Open questions
 
-- **How the guard feed "reconnects".** With `guard.py | bridge.py`, stdin can't reopen after EOF, so `GUARD_STATE` `connected: true` after a disconnect needs a way for a restarted guard to reach the running bridge (e.g. the bridge reading from a named pipe it reopens). Until that's decided, restarting the guard means restarting the pipeline, and the new bridge starts with `guard_connected: true`.
+None open. Resolved 18 Oct: no guard reconnect; `GUARD_STATE` stays `false` after EOF and restarting the guard means restarting the whole pipeline.
 
 ## 10. Work log
 
 - 2026-10-18: file created. Bootstrap only; `bridge.py` is a stub.
 - 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.
 - 2026-10-18: contract: added GUARD_STATE and SNAPSHOT.guard_connected (see docs/shared.md).
+- 2026-10-18: GUARD_STATE has no reconnect case; restart = whole pipeline (see docs/shared.md).

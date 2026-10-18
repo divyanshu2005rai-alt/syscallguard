@@ -9,5 +9,7 @@
     - fallbacks: browser renderer if Electron breaks; backup video (Suyash records, Azaan verifies)
     - rule: never edit demo/project/.env while the guard is running (an editor save can change its inode
       and silently end protection); if you do, restart the guard
+    - normal reset: restarting the guard = Ctrl-C the whole guard.py | bridge.py pipeline and start it again;
+      the bridge can't reattach to a new guard, so never restart guard.py alone. Dashboard reconnects in ~2 s
     - 3 consecutive cold runs logged
 -->

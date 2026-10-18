@@ -95,3 +95,9 @@ Template:
 **Who is affected:** Suyash (runbook, rehearsals), everyone who edits `.env` during testing.
 **Action required:** Suyash — follow the rule in rehearsals and on stage. Others — restart the guard after editing `.env`.
 **Commit:** contract: add GUARD_STATE to bridge protocol; test_events.py ownership; editor/inode gap
+
+### 2026-10-18 · Azaan (track K) · contract
+**What changed:** Contract 4: `GUARD_STATE` has no reconnect case. The bridge sends `connected:false` on guard EOF and stays there; the earlier entry's "`connected:true` when the guard feed reconnects" is withdrawn. Restarting the guard means restarting the whole `guard.py | bridge.py` pipeline; the new bridge starts with `guard_connected: true`. Documented as the normal reset in Suyash's runbook and `docs/presentation/demo-runbook.md`.
+**Who is affected:** Divyanshu (bridge.py), Devansh (guard-feeding indicator only goes back to true via a new `SNAPSHOT` after the pipeline restarts), Suyash (runbook).
+**Action required:** Divyanshu — don't implement a reconnect path. Suyash — never restart `guard.py` alone; restart the pipeline.
+**Commit:** contract: GUARD_STATE has no reconnect; restart means whole pipeline

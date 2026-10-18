@@ -175,6 +175,14 @@ demo/reset.sh                                                          # starts 
 
 **Never edit `demo/project/.env` while the guard is running.** An editor save can give the file a new inode and silently end protection. If you do edit it, restart the guard.
 
+**Restarting the guard = restarting the whole pipeline.** This is the normal reset: Ctrl-C the `guard.py | bridge.py` pipeline in the VM, then run it again:
+
+```bash
+sudo python3 guard/guard.py -p policy/policy.toml --mode enforce | python3 bridge/bridge.py --host 0.0.0.0 --port 8765
+```
+
+The bridge can't reattach to a new guard (its stdin is closed for good), so never restart only `guard.py`. The dashboard reconnects on its own within ~2 s and shows guard feeding again.
+
 **Between runs:** `demo/reset.sh`. For a cold run, revert the VM snapshot.
 
 **Judges** may try rows from the "Blocked" table only (other `--exfil` modes, other ports, base64), never native IPv6 (not set up). **Never invite pipes** (`cat .env | curl ...`): that's a known gap.
@@ -209,3 +217,4 @@ None open. Resolved 18 Oct (see docs/shared.md): `tests/test_policy.py` is Hifza
 - 2026-10-18: file created. `.env`, poisoned README, `check_env.sh`, `lsm_smoke_test.py` complete from bootstrap; the rest are stubs.
 - 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.
 - 2026-10-18: runbook rule: never edit .env while the guard runs; test_events.py is Divyanshu's (see docs/shared.md).
+- 2026-10-18: runbook: restarting the guard means restarting the whole guard | bridge pipeline (see docs/shared.md).
