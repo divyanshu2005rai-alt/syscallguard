@@ -43,9 +43,9 @@ All in `guard/bpf/syscallguard.bpf.c`, compiled by bcc at load time. `#include "
 **Hooks.** Five, one per row of the hook table below:
 
 - **A `file_open`**: read `file->f_inode->i_ino`; if in `protected_inodes`, upsert `tagged[tgid] = {now, ino, 0}`, emit `TAG`. Always return 0. Never deny an open.
-- **B `socket_connect`**: pull family, address and port out of `address`, call `check_dest(..., SG_HOOK_CONNECT)`, return its result.
-- **C `socket_sendmsg`**: if `msg->msg_name` is non-NULL, use that sockaddr (UDP `sendto`, TCP Fast Open). Otherwise use the connected peer from `sock->sk->__sk_common` (`skc_family`, `skc_daddr` / `skc_v6_daddr`, `skc_dport`). Unconnected with no address: return 0. Then `check_dest(..., SG_HOOK_SENDMSG)`.
-- **D `sched_process_fork`**: if parent tgid ≠ child tgid (new process, not a thread) and parent is tagged, insert `tagged[child_tgid] = {now, parent.ino, parent_tgid}`, emit `TAG_INHERIT`.
+- **B `socket_connect`**: pull family, address and port out of `address`, call `check_dest(..., SG_HOOK_CONNECT)`, return its result. Hook B is the only hook that emits `ALLOW`.
+- **C `socket_sendmsg`**: if `msg->msg_name` is non-NULL, use that sockaddr (UDP `sendto`, TCP Fast Open). Otherwise use the connected peer from `sock->sk->__sk_common` (`skc_family`, `skc_daddr` / `skc_v6_daddr`, `skc_dport`). Unconnected with no address: return 0. Then `check_dest(..., SG_HOOK_SENDMSG)`. Hook C never emits `ALLOW`: an allowed send is silent, so chatty connections don't flood the ring buffer.
+- **D `sched_process_fork`**: if parent tgid ≠ child tgid (new process, not a thread) and parent is tagged, insert `tagged[child_tgid] = {now, parent.ino, parent_tgid}`, emit `TAG_INHERIT` with `tgid` = child and `parent_tgid` = parent. The hook runs at fork, before the child calls `exec`, so `comm` is the parent's name. That's accepted: TAG_INHERIT does not assert a process name.
 - **E `sched_process_exit`**: if `pid == tgid` (thread-group leader) and tagged, delete and emit `UNTAG`.
 
 **`check_dest`**: a static helper implementing the decision logic below. Order matters: config lookup, then the `tagged` lookup (fast path out for untagged), then v4-mapped-v6 normalisation, family filter, LPM lookup, mode.
@@ -59,6 +59,7 @@ All in `guard/bpf/syscallguard.bpf.c`, compiled by bcc at load time. `#include "
 - Emit with `events.ringbuf_reserve()` + `events.ringbuf_submit()`; this keeps the 64-byte+ event off the 512-byte stack. If reserve returns NULL, skip the event but still return the verdict.
 - Hooks B and C fire on every connect/send on the whole machine. The untagged path must be **one** map lookup and return.
 - No pass-through of earlier LSM verdicts. If SELinux denies first, your program never runs.
+- Match on inode number only (`i_ino`). Collisions across filesystems are an accepted risk (ARCHITECTURE.md, Design decisions); don't add device matching unasked.
 - LSM, tracepoint and raw-tracepoint probes auto-attach when bcc loads them. You don't attach anything by hand.
 
 ## 5. Contract excerpts
@@ -103,8 +104,8 @@ Contract excerpt (source of truth: ARCHITECTURE.md, section "Hooks"):
 | ID | Attach point (bcc macro) | Logic |
 |---|---|---|
 | A | `LSM_PROBE(file_open, struct file *file)` | `ino = file->f_inode->i_ino`. If `ino` in `protected_inodes`, then upsert `tagged[tgid] = {now, ino, 0}` and emit `TAG`. Always `return 0` (never deny opens). |
-| B | `LSM_PROBE(socket_connect, struct socket *sock, struct sockaddr *address, int addrlen)` | Run `check_dest(family, addr, port, SG_HOOK_CONNECT)` on the address being connected to. |
-| C | `LSM_PROBE(socket_sendmsg, struct socket *sock, struct msghdr *msg, int size)` | If `msg->msg_name` is non-NULL, the destination is that sockaddr (UDP `sendto`, TCP Fast Open). Otherwise use the connected peer from `sock->sk->__sk_common` (`skc_family`, `skc_daddr` / `skc_v6_daddr`, `skc_dport`). Unconnected with no address → return 0. Then `check_dest(...)`. |
+| B | `LSM_PROBE(socket_connect, struct socket *sock, struct sockaddr *address, int addrlen)` | Run `check_dest(family, addr, port, SG_HOOK_CONNECT)` on the address being connected to. Hook B is the only hook that emits `ALLOW`. |
+| C | `LSM_PROBE(socket_sendmsg, struct socket *sock, struct msghdr *msg, int size)` | If `msg->msg_name` is non-NULL, the destination is that sockaddr (UDP `sendto`, TCP Fast Open). Otherwise use the connected peer from `sock->sk->__sk_common` (`skc_family`, `skc_daddr` / `skc_v6_daddr`, `skc_dport`). Unconnected with no address → return 0. Then `check_dest(...)`. Never emits `ALLOW`: an allowed send is silent; a disallowed one emits `WOULD_BLOCK` or `BLOCK`. |
 | D | `RAW_TRACEPOINT_PROBE(sched_process_fork)` | `parent = ctx->args[0]`, `child = ctx->args[1]` (`struct task_struct *`). Read `parent->tgid` and `child->tgid`. If they differ (a new process, not a thread) and the parent tgid is in `tagged`, insert `tagged[child_tgid] = {now, parent.ino, parent_tgid}` and emit `TAG_INHERIT`. |
 | E | `TRACEPOINT_PROBE(sched, sched_process_exit)` | `pid_tgid = bpf_get_current_pid_tgid()`. If `pid == tgid` (thread-group leader) and the tgid is in `tagged`, delete it and emit `UNTAG`. |
 
@@ -117,7 +118,7 @@ check_dest(family, addr, port, hook):
     tag  = tagged.lookup(tgid);  if !tag → return 0           # fast path: untagged
     if family == AF_INET6 and addr is ::ffff:a.b.c.d → family = AF_INET, addr = a.b.c.d
     if family not in {AF_INET, AF_INET6} → return 0           # AF_UNIX etc. are a known gap
-    if allow_v4/allow_v6 LPM lookup (prefixlen 32/128) hits → emit ALLOW; return 0
+    if allow_v4/allow_v6 LPM lookup (prefixlen 32/128) hits → emit ALLOW only if hook == SG_HOOK_CONNECT; return 0
     if cfg.mode == AUDIT → emit WOULD_BLOCK; return 0
     emit BLOCK; return -EPERM
 ```
@@ -125,11 +126,13 @@ check_dest(family, addr, port, hook):
 ## 6. Your milestones
 
 - [ ] **M1 Tagging** (K + G, 18–19 Oct): Guard starts in audit mode and prints `READY`; `cat demo/project/.env` → `TAG` event for `cat`; `sudo bpftool map dump name tagged` shows the entry
-- [ ] **M2 Inheritance & cleanup** (K, 19 Oct): `python3 -c "open('demo/project/.env').read(); import subprocess; subprocess.run(['sleep','1'])"` → `TAG` (python3) + `TAG_INHERIT` (sleep); after exit both get `UNTAG` and the map is empty of them
+- [ ] **M2 Inheritance & cleanup** (K, 19 Oct): `python3 -c "open('demo/project/.env').read(); import subprocess; subprocess.run(['sleep','1'])"` → `TAG` (python3) + `TAG_INHERIT` for the child tgid with `parent_tgid` = the python3 tgid (process name not asserted); after exit both get `UNTAG` and the map is empty of them
 - [ ] **M3 Connect enforcement** (K + G, 19 Oct): Enforce mode: tagged `agent.py --exfil direct` → `PermissionError` + `BLOCK`; its POST to 127.0.0.1:8080 succeeds with `ALLOW`; an untagged `python3 -c` connect to the attacker succeeds; audit mode → all succeed + `WOULD_BLOCK`
-- [ ] **M4 Sendmsg** (K, 20 Oct): `--exfil udp` and `--exfil preconnect` blocked with `BLOCK hook=sendmsg`; `--exfil ipv6` blocked
+- [ ] **M4 Sendmsg** (K, 20 Oct): `--exfil udp` and `--exfil preconnect` blocked with `BLOCK hook=sendmsg`
 - [ ] **S1 Stretch** (K, after M7): `socket_create` denies `AF_PACKET`/`SOCK_RAW` for tagged processes
-- [ ] **S2 Stretch** (finale, 26–30 Oct; K + G, after the department round): `file_permission` hook: a tagged process writing to a pipe/file taints that inode; reading a tainted inode tags the reader. `cat .env | curl ...` becomes blocked
+- [ ] **S2 Stretch** (finale, 26–30 Oct; K, after the department round): `file_permission` hook: a tagged process writing to a pipe/file taints that inode; reading a tainted inode tags the reader. `cat .env | curl ...` becomes blocked
+
+S2 is yours alone (K), not shared with G. For M7 you also verify Suyash's backup video.
 
 **Start now:** M0 in the VM; then Hook A plus the maps. Use `scripts/lsm_smoke_test.py` as a template for a throwaway loader until Hifza's `guard.py` lands.
 **Blocked by:** Hifza's loader for real acceptance runs (M1, M3). Suyash's `agent.py` for M3/M4 acceptance.
@@ -189,11 +192,9 @@ Start-here prompt to paste to an agent:
 
 ## 9. Open questions
 
-- **TAG_INHERIT `comm`.** Hook D runs at fork, before the child calls `exec`, and in the parent's context. So `bpf_get_current_comm()` gives the parent's name (`python3`), not `sleep`/`curl`. M2 acceptance says `TAG_INHERIT (sleep)` and the `--fake` story says `TAG_INHERIT (curl)`. Options: read `child->comm` (still the parent's name before exec), add an exec hook, or accept the parent name in TAG_INHERIT and let later events carry the real name. Needs a decision with Divyanshu and Devansh; may be a `contract:` change.
-- **ALLOW event volume.** Hook C fires on every `send()` on a connected socket, so a tagged process talking to 127.0.0.1:8080 or the DNS stub emits an `ALLOW` per send. Is that acceptable for the ring buffer and the dashboard log, or should ALLOW be emitted only on connect? Not specified.
-- **Inode-only key.** `protected_inodes` is keyed by `i_ino` alone; same inode number on another filesystem would match. Accepted risk per ARCHITECTURE.md, noted so nobody "fixes" it silently.
 - **Editors replacing the file.** If `.env` is saved via write-to-new-file-and-rename, its inode changes and the guard (which read `st_ino` at startup) stops protecting it until restarted. Not specified whether this needs handling.
 
 ## 10. Work log
 
 - 2026-10-18: file created. Bootstrap only; no kernel code yet.
+- 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.

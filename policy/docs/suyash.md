@@ -21,7 +21,7 @@ Do not edit: the schema or validation rules (Hifza). Adding or renaming a key is
 
 ## 4. What to build
 
-**Choosing protected paths.** Absolute paths that exist at guard startup. The example uses `/home/demo/syscallguard/demo/project/.env`; change the home directory to match where the repo is checked out in the VM (`realpath demo/project/.env`). The guard protects the inode it finds at startup. If an editor replaces the file (save-as-new-file-and-rename), restart the guard.
+**Choosing protected paths.** Absolute paths that exist at guard startup. The example uses `/home/demo/syscallguard/demo/project/.env`; change the home directory to match where the repo is checked out in the VM (`realpath demo/project/.env`). Real VM paths go in `policy/policy.toml`, which is gitignored and stays local; the committed example keeps the `/home/demo/...` placeholder. The guard protects the inode it finds at startup. If an editor replaces the file (save-as-new-file-and-rename), restart the guard.
 
 **Why loopback must stay allowlisted.** The internal API mock (`127.0.0.1:8080`) and the systemd-resolved DNS stub (`127.0.0.53`) both live on loopback. Without `127.0.0.0/8` a tagged agent can't do its allowed work or even resolve a name. This is also why the attacker must run on the host, never on localhost.
 
@@ -84,9 +84,9 @@ Start-here prompt:
 
 ## 9. Open questions
 
-- **Is the example path meant to stay `/home/demo/...`** (a dedicated `demo` user on the VM), or should it track the real VM user? Not specified.
-- **Commit `policy/policy.toml` or keep it local?** It isn't gitignored.
+None open. Resolved 18 Oct (see docs/shared.md): the example keeps the `/home/demo/...` placeholder; `policy/policy.toml` is gitignored.
 
 ## 10. Work log
 
 - 2026-10-18: file created.
+- 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.

@@ -17,6 +17,7 @@ The policy is the guard's briefing: which files are confidential, which rooms a 
 ## 3. Files you own
 
 - The schema (keys, types, rules), as implemented in `guard/policy.py`
+- `tests/test_policy.py`: the validation tests
 - `policy/docs/hifza.md`: this file (sections 6, 9, 10 only, during development)
 
 Do not edit: `policy/policy.example.toml` content for VM paths (Suyash). Schema changes to it are a `contract:` commit.
@@ -27,18 +28,24 @@ Keys:
 
 | Key | Type | Rule |
 |---|---|---|
-| `mode` | string | `"audit"` or `"enforce"`. CLI `--mode` overrides the file. |
-| `protect` | list of strings | each path absolute and existing; `os.stat` (follows symlinks, so the real file is protected) |
-| `allow` | list of strings | each parses with `ipaddress.ip_network(entry, strict=False)`; IPv4 and IPv6 |
+| `mode` | string | `"audit"` or `"enforce"`; missing → `audit`. CLI `--mode` overrides the file. |
+| `protect` | list of strings | must be non-empty; each path absolute and existing; `os.stat` (follows symlinks, so the real file is protected) |
+| `allow` | list of strings | may be empty (a tagged process then reaches nothing, useful for testing); each entry parses with `ipaddress.ip_network(entry, strict=False)`; IPv4 and IPv6 |
 
 Mode semantics: `audit` logs `WOULD_BLOCK` and blocks nothing. `enforce` blocks with `EPERM`. Default is `audit`.
+
+Unknown keys are rejected. Map-size limits (256 protected inodes, 1024 entries per allow trie) are not checked.
 
 On any error: clear message to stderr naming the key and value, exit **2**.
 
 Cases `tests/test_policy.py` must cover:
 
 - the example policy (with `protect` pointed at a temp file) parses
-- `mode` missing or not in {audit, enforce} → exit 2
+- `mode` missing → `audit`
+- `mode` not in {audit, enforce} → exit 2
+- empty `protect` → exit 2
+- empty `allow` → accepted
+- unknown key → exit 2
 - relative `protect` path → exit 2
 - non-existent `protect` path → exit 2
 - symlinked `protect` path → resolves to the target's inode
@@ -69,7 +76,7 @@ allow = [
 ]
 ```
 
-> Parsing (`guard/policy.py`): use `tomllib`. Validate that `mode` ∈ {audit, enforce}; that every `protect` path is absolute and exists (`os.stat`, which follows symlinks, so we protect the real file); and that every `allow` entry parses with `ipaddress.ip_network(strict=False)`. On any error, print a clear message to stderr and exit 2. A CLI `--mode` flag overrides the file.
+> Parsing (`guard/policy.py`): use `tomllib`. Validate that `mode` ∈ {audit, enforce}; that every `protect` path is absolute and exists (`os.stat`, which follows symlinks, so we protect the real file); and that every `allow` entry parses with `ipaddress.ip_network(strict=False)`. On any error, print a clear message to stderr and exit 2. A CLI `--mode` flag overrides the file. A missing `mode` means `audit`. `protect` must be non-empty; `allow` may be empty (a tagged process then reaches nothing, useful for testing). Unknown keys are rejected. Map-size limits are not checked.
 
 ## 6. Your milestones
 
@@ -101,12 +108,9 @@ Start-here prompt:
 
 ## 9. Open questions
 
-- **Empty lists.** Is `protect = []` or `allow = []` valid? Not specified. (Empty `allow` in enforce mode would block all network for tagged processes, including DNS.)
-- **Missing `mode` key.** Default to `audit`, or error? The example comment says "Default to audit".
-- **Unknown keys.** Reject or ignore? Not specified.
-- **Max sizes.** `protected_inodes` holds 256 entries and each allow trie 1024; whether validation enforces these limits is not specified.
-- **Who writes `tests/test_policy.py`** (you vs Suyash). See guard/docs/hifza.md.
+None open. Resolved 18 Oct (see docs/shared.md): empty `protect` invalid, empty `allow` valid, missing `mode` → audit, unknown keys rejected, no map-size checks, you own `tests/test_policy.py`.
 
 ## 10. Work log
 
 - 2026-10-18: file created.
+- 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.

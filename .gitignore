@@ -18,6 +18,9 @@ out/
 # Logs
 *.log
 
+# Local policy with VM-specific paths (policy.example.toml stays committed)
+policy/policy.toml
+
 # Local agent config (each developer's own tool)
 CLAUDE.md
 .claude/

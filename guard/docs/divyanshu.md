@@ -62,6 +62,10 @@ Hifza builds the `EventContext` once at startup and calls `decode_event` once pe
 
 `struct sg_event` fields in order: `u64 ts_ns, u64 ino, u32 type, u32 hook, u32 tgid, u32 parent_tgid, u16 family, u16 dport, u8 daddr[16], char comm[16]`. Every field is already naturally aligned, so `struct.unpack_from("<QQIIIIHH16s16s", data)` reads it (68 bytes, little-endian on x86_64). The C `sizeof` is 72 because of tail padding to 8-byte alignment, so `data` may be longer than 68 bytes. Use `unpack_from`, not `unpack`.
 
+### When to return `None`
+
+Only when the buffer is short (fewer than 68 bytes) or otherwise malformed. Every well-formed event is emitted.
+
 ### Building each field
 
 | Field | From | Rule |
@@ -72,18 +76,20 @@ Hifza builds the `EventContext` once at startup and calls `decode_event` once pe
 | `hook` | `hook` | 1 `file_open`, 2 `connect`, 3 `sendmsg`, 4 `fork`, 5 `exit`; 0 (`SG_HOOK_NONE`) → `null` |
 | `tgid` | `tgid` | int |
 | `parent_tgid` | `parent_tgid` | int on `TAG_INHERIT`; `null` otherwise (the Contract 3 example shows `null` on a `BLOCK`) |
-| `comm` | `comm` | bytes up to the first NUL, decoded as text (use `errors="replace"`) |
-| `file` | `ino` | `ctx.inode_paths.get(ino)`; `null` when `ino` is 0 |
+| `comm` | `comm` | bytes up to the first NUL, decoded as text (use `errors="replace"`). On `TAG_INHERIT` this is the name at fork (usually the parent's); pass it through as-is |
+| `file` | `ino` | `ctx.inode_paths.get(ino)`; `null` when `ino` is 0 or not in `ctx.inode_paths` (the event is still emitted) |
 | `family` | `family` | 2 → `"ipv4"`, 10 → `"ipv6"`, 0 → `null` |
 | `daddr` | `daddr` | ipv4: `str(ipaddress.IPv4Address(daddr[:4]))`; ipv6: `str(ipaddress.IPv6Address(daddr))`; no family → `null` |
 | `dport` | `dport` | int (already host byte order); `null` when there is no address |
 | `mode` | `ctx.mode` | `"audit"` or `"enforce"` |
 
+`ALLOW` only ever comes from hook B, so it always has `hook = "connect"`. Hook C (`sendmsg`) emits only `WOULD_BLOCK`/`BLOCK`.
+
 `READY` and `ERROR` events are **not** yours. `guard.py` builds those directly.
 
 ### IPv4-mapped IPv6
 
-The kernel side normalises `::ffff:a.b.c.d` to `AF_INET` + `a.b.c.d` in `check_dest` before emitting, so mapped addresses should arrive as `family = 2`. What the decoder should do if one arrives as `family = 10` anyway is not specified (see Open questions).
+The kernel side normalises `::ffff:a.b.c.d` to `AF_INET` + `a.b.c.d` in `check_dest` before emitting, so mapped addresses arrive as `family = 2`. The decoder formats whatever family arrives; no special-casing.
 
 ### Purity
 
@@ -123,7 +129,7 @@ Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 3: Guard C
 | `type` | string | `READY` `TAG` `TAG_INHERIT` `ALLOW` `BLOCK` `WOULD_BLOCK` `UNTAG` `ERROR` |
 | `hook` | string or null | `file_open` `connect` `sendmsg` `fork` `exit` |
 | `tgid`, `parent_tgid` | int or null | |
-| `comm` | string | process name |
+| `comm` | string or null | process name; `null` on `READY`/`ERROR`. On `TAG_INHERIT` it is the name at fork time (usually the parent's); consumers must not rely on it |
 | `file` | string or null | protected path resolved from `ino` |
 | `family` | `"ipv4"`/`"ipv6"`/null | |
 | `daddr` | string or null | formatted with `ipaddress` |
@@ -135,11 +141,12 @@ Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 3: Guard C
 `events.py` has no milestone of its own; it is on the critical path of these:
 
 - [ ] **M1 Tagging** (K + G, 18–19 Oct): Guard starts in audit mode and prints `READY`; `cat demo/project/.env` → `TAG` event for `cat`; `sudo bpftool map dump name tagged` shows the entry
+- [ ] **M2 Inheritance & cleanup** (K, 19 Oct): `python3 -c "open('demo/project/.env').read(); import subprocess; subprocess.run(['sleep','1'])"` → `TAG` (python3) + `TAG_INHERIT` for the child tgid with `parent_tgid` = the python3 tgid (process name not asserted); after exit both get `UNTAG` and the map is empty of them
 - [ ] **M3 Connect enforcement** (K + G, 19 Oct): Enforce mode: tagged `agent.py --exfil direct` → `PermissionError` + `BLOCK`; its POST to 127.0.0.1:8080 succeeds with `ALLOW`; an untagged `python3 -c` connect to the attacker succeeds; audit mode → all succeed + `WOULD_BLOCK`
 
 **Start now:** all of it. The struct layout and schema are fixed; test with hand-packed bytes, no VM.
 **Blocked by:** nothing.
-**You block:** Hifza's event output (M1, M3) and, through the bridge, Devansh's real-data dashboard (M5 real).
+**You block:** Hifza's event output (M1, M2, M3) and, through the bridge, Devansh's real-data dashboard (M5 real).
 
 Do the bridge's `--fake` mode first (it unblocks Devansh today), then this.
 
@@ -191,12 +198,9 @@ Start-here prompt to paste to an agent:
 
 ## 9. Open questions
 
-- **When to return `None`.** The signature allows dropping an event, but no case is specified. Candidates: data shorter than 68 bytes, unknown `type` value. Agree with Hifza.
-- **Unknown inode.** If `ino` is non-zero but not in `ctx.inode_paths`, should `file` be `null` or the event dropped?
-- **IPv4-mapped IPv6 arriving as `family = 10`.** Should the decoder convert to `"ipv4"` + dotted quad, or pass through as IPv6 text? (Python 3.13+ prints mapped addresses as `::ffff:192.168.122.1`.)
-- **TAG_INHERIT `comm`.** The fork hook runs before `exec`, so `comm` on `TAG_INHERIT` will likely be the parent's name (e.g. `python3`, not `sleep`/`curl`). See Azaan's open questions; affects what the dashboard shows.
-- **No test file is assigned for `events.py`.** `tests/` belongs to Suyash; decide whether a decoder test lives there or as a self-check in `events.py`.
+- **No test file is assigned for `events.py`.** `tests/test_policy.py` is Hifza's and the rest of `tests/` is Suyash's; decide whether a decoder test lives in `tests/` or as a self-check in `events.py`.
 
 ## 10. Work log
 
 - 2026-10-18: file created. Bootstrap only; `events.py` is a stub.
+- 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.

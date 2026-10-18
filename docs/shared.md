@@ -47,3 +47,33 @@ Template:
 **Who is affected:** Everyone. Azaan (structs/maps), Hifza (loader, policy), Divyanshu (decoder, bridge), Devansh (dashboard consumes Contracts 3 and 4), Suyash (demo and tests rely on all four).
 **Action required:** none, informational. Build against these; propose changes with a `contract:` commit plus an entry here.
 **Commit:** chore: bootstrap SyscallGuard repository
+
+### 2026-10-18 · Azaan (track K) · contract
+**What changed:** `TAG_INHERIT` no longer asserts a process name. Hook D runs at fork, before `exec`, so its `comm` is the parent's name. M2 acceptance (PROJECT_BRIEF Part 9, AGENTS.md) now checks `TAG_INHERIT` for the child tgid with `parent_tgid` = the python3 tgid instead of `TAG_INHERIT (sleep)`. Contract 3 `comm` row documents this. Contract 4 `--fake` story: `TAG_INHERIT` carries comm `python3`; `curl` appears only on the `BLOCK`.
+**Who is affected:** Divyanshu (bridge `--fake` story; decoder passes `comm` through as-is), Devansh (tagged list shows the fork-time name for inherited entries), Suyash (M2 run in the VM).
+**Action required:** Divyanshu — build the fake story with the new comms. Devansh — don't assume an inherited entry's `comm` is the child's program.
+**Commit:** contract: TAG_INHERIT name not asserted, hook C emits no ALLOW, resolve open questions
+
+### 2026-10-18 · Azaan (track K) · contract
+**What changed:** Hook C (`socket_sendmsg`) never emits `ALLOW`; only hook B (`socket_connect`) does. Allowed sends are silent; disallowed sends still emit `WOULD_BLOCK`/`BLOCK`. Hook table and `check_dest` updated in ARCHITECTURE.md and PROJECT_BRIEF 5.2.
+**Who is affected:** Azaan (`syscallguard.bpf.c`), Divyanshu (`ALLOW` always has `hook = "connect"`, fake `ALLOW` too), Devansh (fewer `ALLOW` log lines), Suyash (M3 `ALLOW` still comes from the connect).
+**Action required:** Azaan — emit `ALLOW` only when `hook == SG_HOOK_CONNECT`. Others: none.
+**Commit:** contract: TAG_INHERIT name not asserted, hook C emits no ALLOW, resolve open questions
+
+### 2026-10-18 · Azaan (track K) · contract
+**What changed:** Open questions resolved into Contracts 2–4. Contract 2: missing `mode` → `audit`; `protect` must be non-empty; `allow` may be empty; unknown keys rejected; no map-size checks. Contract 3: `comm` is `null` on `READY`/`ERROR`; guard exit codes `0` clean shutdown, `2` bad policy, `3` BPF load failure (an `ERROR` event goes to stdout first); `--debug` is verbose stderr only. Contract 4: bridge `--host` defaults to `127.0.0.1`; malformed stdin line skipped and logged to stderr; repeat `TAG` keeps the original `since`; `SNAPSHOT.mode` is `null` before `READY`; on stdin EOF the bridge keeps serving the last state. Decoder: `decode_event` returns `None` only for a short/malformed buffer; unknown inode → still emitted with `file: null`. Dashboard: banner green except `BLOCK` (red), `WOULD_BLOCK` (amber), `ERROR` (red, shows `message`); null fields omitted from banner text; log keeps 100 entries.
+**Who is affected:** Hifza (policy.py, guard.py), Divyanshu (events.py, bridge.py), Devansh (dashboard), Suyash (runbook, exit codes in scripts).
+**Action required:** Each person — build to the updated section 4 of your person file.
+**Commit:** contract: TAG_INHERIT name not asserted, hook C emits no ALLOW, resolve open questions
+
+### 2026-10-18 · Azaan (track K) · path
+**What changed:** Native IPv6 dropped from the demo: `agent.py --exfil ipv6` removed from the spec (PROJECT_BRIEF 5.6, AGENTS.md), the `--exfil ipv6 blocked` clause removed from M4, the native IPv6 row removed from the attack matrix and the judge invitation list. IPv4-mapped IPv6 stays in the matrix (it uses IPv4 routing). The "any port" matrix row uses ports 9999 and 4444. `agent.py --exfil curl` detects failure by curl exit code 7.
+**Who is affected:** Suyash (agent.py, attack_matrix.py, runbook), Azaan (M4 acceptance).
+**Action required:** Suyash — don't build the `ipv6` mode; matrix confirms the curl block via the guard's `BLOCK` event, since exit 7 also means "refused".
+**Commit:** contract: TAG_INHERIT name not asserted, hook C emits no ALLOW, resolve open questions
+
+### 2026-10-18 · Azaan (track K) · correction
+**What changed:** Ownership and paths corrected. `tests/test_policy.py` belongs to Hifza; the rest of `tests/` stays Suyash's. S2 belongs to Track K only (was "K + G"). Track P (presentation, `docs/presentation/`) is Suyash's second hat. The backup video: Suyash records, Azaan verifies. `policy/policy.toml` is now gitignored; `policy/policy.example.toml` stays committed with its `/home/demo/...` placeholder.
+**Who is affected:** Hifza, Suyash, Azaan.
+**Action required:** Suyash — keep VM paths in your local `policy/policy.toml` only. Hifza — you write `tests/test_policy.py`.
+**Commit:** contract: TAG_INHERIT name not asserted, hook C emits no ALLOW, resolve open questions

@@ -28,11 +28,12 @@ Azaan builds the guard itself (kernel code). You are the one who **briefs the gu
 
 - `guard/guard.py`: CLI, loader, map population, poll loop, shutdown
 - `guard/policy.py`: parse and validate the policy file
+- `tests/test_policy.py`: unit tests for your validation
 - `guard/docs/hifza.md`: this file (sections 6, 9, 10 only, during development)
 - `policy/docs/hifza.md`: your policy schema notes
 - Shared: the **schema and validation** of `policy/` is yours; Suyash keeps `policy/policy.example.toml` correct for the VM.
 
-Do not edit: `guard/bpf/` (Azaan), `guard/events.py`, `bridge/` (Divyanshu), `dashboard/` (Devansh), `demo/`, `scripts/`, `tests/` (Suyash).
+Do not edit: `guard/bpf/` (Azaan), `guard/events.py`, `bridge/` (Divyanshu), `dashboard/` (Devansh), `demo/`, `scripts/`, `tests/attack_matrix.py` (Suyash).
 
 ## 4. What to build
 
@@ -57,9 +58,9 @@ sudo python3 guard/guard.py -p policy/policy.toml [--mode audit|enforce] [--debu
 
 Startup, in order:
 
-1. Parse args, load and validate the policy (exit 2 on error).
+1. Parse args, load and validate the policy (exit 2 on error). `--debug` turns on verbose logging, to stderr only.
 2. Load the BPF program:
-   `BPF(src_file=<abs path>/guard/bpf/syscallguard.bpf.c, cflags=["-I<abs path to guard/bpf>"])`. Build paths from `__file__` so it works from any working directory. LSM, tracepoint and raw-tracepoint probes auto-attach on load.
+   `BPF(src_file=<abs path>/guard/bpf/syscallguard.bpf.c, cflags=["-I<abs path to guard/bpf>"])`. Build paths from `__file__` so it works from any working directory. LSM, tracepoint and raw-tracepoint probes auto-attach on load. If loading fails (compile error, verifier rejection), write an `ERROR` event with `"message"` = the bcc error to stdout, then exit **3**.
 3. Fill maps (names are Contract 1):
    - `protected_inodes`: key `st_ino` (u64), value = index into the policy `protect` list (u32).
    - `allow_v4` / `allow_v6`: one LPM entry per network. Key `prefixlen` = `net.prefixlen`, `addr` = `net.network_address.packed`. The value (u8) is unused by `check_dest`, only a hit matters.
@@ -68,10 +69,12 @@ Startup, in order:
    - `inode_paths`: `{st_ino: path}` from the policy.
    - `boot_time_epoch`: `bpf_ktime_get_ns()` is CLOCK_MONOTONIC, so `time.time() - time.monotonic()`.
    - `mode`: the effective mode after `--mode` override.
-5. Emit `READY` with `"protect": [...]` and `"allow": [...]`.
+5. Emit `READY` with `"protect": [...]` and `"allow": [...]`. `comm` is `null` on `READY` and `ERROR`.
 6. Open the ring buffer: `b["events"].open_ring_buffer(callback)`, then loop `b.ring_buffer_poll()` forever. In the callback, copy the bytes with `ctypes.string_at(data, size)`, call `decode_event(raw, ctx)`; if it returns a dict, write `json.dumps(d)` + newline to stdout and flush; if `None`, drop it.
 
-Shutdown: on SIGINT and SIGTERM, leave the loop and exit cleanly. All hooks detach when the process exits.
+Shutdown: on SIGINT and SIGTERM, leave the loop and exit **0**. All hooks detach when the process exits.
+
+Exit codes: `0` clean shutdown, `2` bad policy, `3` BPF load failure.
 
 Output rule: **stdout carries JSON lines only**, one object per line, flushed after each. Every log, warning and debug message goes to stderr. Anything else on stdout breaks the bridge.
 
@@ -79,12 +82,13 @@ Output rule: **stdout carries JSON lines only**, one object per line, flushed af
 
 Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 2: Policy file"):
 
-> Parsing (`guard/policy.py`): use `tomllib`. Validate that `mode` ∈ {audit, enforce}; that every `protect` path is absolute and exists (`os.stat`, which follows symlinks, so we protect the real file); and that every `allow` entry parses with `ipaddress.ip_network(strict=False)`. On any error, print a clear message to stderr and exit 2. A CLI `--mode` flag overrides the file.
+> Parsing (`guard/policy.py`): use `tomllib`. Validate that `mode` ∈ {audit, enforce}; that every `protect` path is absolute and exists (`os.stat`, which follows symlinks, so we protect the real file); and that every `allow` entry parses with `ipaddress.ip_network(strict=False)`. On any error, print a clear message to stderr and exit 2. A CLI `--mode` flag overrides the file. A missing `mode` means `audit`. `protect` must be non-empty; `allow` may be empty (a tagged process then reaches nothing, useful for testing). Unknown keys are rejected. Map-size limits are not checked.
 
 Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 3: Guard CLI and JSON event schema"):
 
 > - Loads the BPF program, fills `protected_inodes` (`st_ino`), `allow_v4`/`allow_v6` and `config`, emits `READY`, then polls the ring buffer forever.
 > - On SIGINT/SIGTERM, exits cleanly. All hooks detach when the process exits; this is the safety valve.
+> - Exit codes: `0` clean shutdown on SIGINT/SIGTERM, `2` bad policy, `3` BPF load failure (an `ERROR` event is written to stdout first). `--debug` only adds verbose logging on stderr.
 > - **Stdout = one JSON object per line, flushed after each line.** Nothing else goes to stdout.
 
 > The `READY` event also carries `"protect": [...]` and `"allow": [...]`. The `ERROR` event carries `"message": "..."`.
@@ -139,6 +143,7 @@ sudo python3 guard/guard.py -p /nope.toml; echo $?          # → message on std
 | bcc compile errors about headers | `kernel-devel` doesn't match `uname -r`; or the `-I` path isn't absolute. |
 | No TAG for `cat .env` | `protected_inodes` empty or wrong inode: `sudo bpftool map dump name protected_inodes` vs `stat -c %i demo/project/.env`. |
 | Timestamps are off by hours | Using `time.time()` alone; `ts_ns` is time since boot. Check `boot_time_epoch`. |
+| Guard exits 3 | BPF load failed; the `ERROR` line on stdout and stderr carry the bcc/verifier message. Tell Azaan. |
 | Ctrl-C leaves hooks attached | It can't: hooks detach on process exit. Check `bpftool prog list` to confirm. |
 
 ## 8. Working with AI agents
@@ -161,14 +166,9 @@ Start-here prompt to paste to an agent:
 
 ## 9. Open questions
 
-- **Exit code on BPF load failure** (compile error, verifier rejection) is not specified. Only policy errors are defined as exit 2. Should load failure also emit an `ERROR` JSON event before exiting?
-- **When `ERROR` events are emitted** at all is not specified (load failure? ring-buffer poll error? decoder exception?).
-- **`--debug` behaviour** is not specified. Assumed: extra logging to stderr only, never stdout.
-- **Fields on `READY` / `ERROR`.** Contract 3 lists `comm` as a string and `hook`/`tgid`/etc. as nullable, but doesn't say what `READY` and `ERROR` carry for `comm` (empty string? `"guard.py"`?).
-- **Exit code after SIGINT/SIGTERM** ("exits cleanly") is not specified. Assumed 0.
-- **Who writes `tests/test_policy.py`.** PROJECT_BRIEF Part 8 gives it to Track G; the team ownership table gives all of `tests/` to Suyash. Agree with Suyash.
-- **S2 stretch** lists "K + G"; which G person (you or Divyanshu) is not decided.
+None open. Resolved 18 Oct (see docs/shared.md): exit codes 0/2/3, `ERROR` on load failure, `--debug` is stderr-only, `comm` is `null` on `READY`/`ERROR`, you own `tests/test_policy.py`, S2 belongs to Track K.
 
 ## 10. Work log
 
 - 2026-10-18: file created. Bootstrap only; `guard.py` and `policy.py` are stubs.
+- 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.

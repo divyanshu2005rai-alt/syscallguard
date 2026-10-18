@@ -45,8 +45,8 @@ The bridge accepting the dashboard's connection is unaffected by the guard: the 
 | ID | Attach point (bcc macro) | Logic |
 |---|---|---|
 | A | `LSM_PROBE(file_open, struct file *file)` | `ino = file->f_inode->i_ino`. If `ino` in `protected_inodes`, then upsert `tagged[tgid] = {now, ino, 0}` and emit `TAG`. Always `return 0` (never deny opens). |
-| B | `LSM_PROBE(socket_connect, struct socket *sock, struct sockaddr *address, int addrlen)` | Run `check_dest(family, addr, port, SG_HOOK_CONNECT)` on the address being connected to. |
-| C | `LSM_PROBE(socket_sendmsg, struct socket *sock, struct msghdr *msg, int size)` | If `msg->msg_name` is non-NULL, the destination is that sockaddr (UDP `sendto`, TCP Fast Open). Otherwise use the connected peer from `sock->sk->__sk_common` (`skc_family`, `skc_daddr` / `skc_v6_daddr`, `skc_dport`). Unconnected with no address → return 0. Then `check_dest(...)`. |
+| B | `LSM_PROBE(socket_connect, struct socket *sock, struct sockaddr *address, int addrlen)` | Run `check_dest(family, addr, port, SG_HOOK_CONNECT)` on the address being connected to. Hook B is the only hook that emits `ALLOW`. |
+| C | `LSM_PROBE(socket_sendmsg, struct socket *sock, struct msghdr *msg, int size)` | If `msg->msg_name` is non-NULL, the destination is that sockaddr (UDP `sendto`, TCP Fast Open). Otherwise use the connected peer from `sock->sk->__sk_common` (`skc_family`, `skc_daddr` / `skc_v6_daddr`, `skc_dport`). Unconnected with no address → return 0. Then `check_dest(...)`. Never emits `ALLOW`: an allowed send is silent; a disallowed one emits `WOULD_BLOCK` or `BLOCK`. |
 | D | `RAW_TRACEPOINT_PROBE(sched_process_fork)` | `parent = ctx->args[0]`, `child = ctx->args[1]` (`struct task_struct *`). Read `parent->tgid` and `child->tgid`. If they differ (a new process, not a thread) and the parent tgid is in `tagged`, insert `tagged[child_tgid] = {now, parent.ino, parent_tgid}` and emit `TAG_INHERIT`. |
 | E | `TRACEPOINT_PROBE(sched, sched_process_exit)` | `pid_tgid = bpf_get_current_pid_tgid()`. If `pid == tgid` (thread-group leader) and the tgid is in `tagged`, delete it and emit `UNTAG`. |
 
@@ -59,7 +59,7 @@ check_dest(family, addr, port, hook):
     tag  = tagged.lookup(tgid);  if !tag → return 0           # fast path: untagged
     if family == AF_INET6 and addr is ::ffff:a.b.c.d → family = AF_INET, addr = a.b.c.d
     if family not in {AF_INET, AF_INET6} → return 0           # AF_UNIX etc. are a known gap
-    if allow_v4/allow_v6 LPM lookup (prefixlen 32/128) hits → emit ALLOW; return 0
+    if allow_v4/allow_v6 LPM lookup (prefixlen 32/128) hits → emit ALLOW only if hook == SG_HOOK_CONNECT; return 0
     if cfg.mode == AUDIT → emit WOULD_BLOCK; return 0
     emit BLOCK; return -EPERM
 ```
@@ -165,7 +165,7 @@ allow = [
 ]
 ```
 
-Parsing (`guard/policy.py`): use `tomllib`. Validate that `mode` ∈ {audit, enforce}; that every `protect` path is absolute and exists (`os.stat`, which follows symlinks, so we protect the real file); and that every `allow` entry parses with `ipaddress.ip_network(strict=False)`. On any error, print a clear message to stderr and exit 2. A CLI `--mode` flag overrides the file.
+Parsing (`guard/policy.py`): use `tomllib`. Validate that `mode` ∈ {audit, enforce}; that every `protect` path is absolute and exists (`os.stat`, which follows symlinks, so we protect the real file); and that every `allow` entry parses with `ipaddress.ip_network(strict=False)`. On any error, print a clear message to stderr and exit 2. A CLI `--mode` flag overrides the file. A missing `mode` means `audit`. `protect` must be non-empty; `allow` may be empty (a tagged process then reaches nothing, useful for testing). Unknown keys are rejected. Map-size limits are not checked.
 
 ## Contract 3: Guard CLI and JSON event schema (stdout of `guard.py`)
 
@@ -175,6 +175,7 @@ sudo python3 guard/guard.py -p policy/policy.toml [--mode audit|enforce] [--debu
 
 - Loads the BPF program, fills `protected_inodes` (`st_ino`), `allow_v4`/`allow_v6` and `config`, emits `READY`, then polls the ring buffer forever.
 - On SIGINT/SIGTERM, exits cleanly. All hooks detach when the process exits; this is the safety valve.
+- Exit codes: `0` clean shutdown on SIGINT/SIGTERM, `2` bad policy, `3` BPF load failure (an `ERROR` event is written to stdout first). `--debug` only adds verbose logging on stderr.
 - **Stdout = one JSON object per line, flushed after each line.** Nothing else goes to stdout.
 
 ```json
@@ -190,7 +191,7 @@ sudo python3 guard/guard.py -p policy/policy.toml [--mode audit|enforce] [--debu
 | `type` | string | `READY` `TAG` `TAG_INHERIT` `ALLOW` `BLOCK` `WOULD_BLOCK` `UNTAG` `ERROR` |
 | `hook` | string or null | `file_open` `connect` `sendmsg` `fork` `exit` |
 | `tgid`, `parent_tgid` | int or null | |
-| `comm` | string | process name |
+| `comm` | string or null | process name; `null` on `READY`/`ERROR`. On `TAG_INHERIT` it is the name at fork time (usually the parent's); consumers must not rely on it |
 | `file` | string or null | protected path resolved from `ino` |
 | `family` | `"ipv4"`/`"ipv6"`/null | |
 | `daddr` | string or null | formatted with `ipaddress` |
@@ -215,9 +216,10 @@ python3 bridge/bridge.py --fake --port 8765        # no kernel, any OS
    "recent":[ ...last 50 events... ]}
   ```
   So a dashboard that restarts mid-demo recovers its full state.
-- `--fake` loops a realistic story every ~10 s: `READY` → `TAG` (python3) → `ALLOW` 127.0.0.1:8080 → `TAG_INHERIT` (curl) → `BLOCK` 192.168.122.1:9999 → `UNTAG`.
+- `--fake` loops a realistic story every ~10 s: `READY` → `TAG` (python3) → `ALLOW` 127.0.0.1:8080 → `TAG_INHERIT` (comm `python3`, the name at fork) → `BLOCK` (comm `curl`) 192.168.122.1:9999 → `UNTAG`.
 - Read-only feed. Ignore messages from clients.
 - Never imports `bcc`. Runs unprivileged.
+- `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running and serves the last state.
 
 ---
 

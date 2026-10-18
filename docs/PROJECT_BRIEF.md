@@ -269,8 +269,8 @@ Maps (declared in `syscallguard.bpf.c`; the names are part of the contract becau
 | ID | Attach point (bcc macro) | Logic |
 |---|---|---|
 | A | `LSM_PROBE(file_open, struct file *file)` | `ino = file->f_inode->i_ino`. If `ino` in `protected_inodes`, then upsert `tagged[tgid] = {now, ino, 0}` and emit `TAG`. Always `return 0` (never deny opens). |
-| B | `LSM_PROBE(socket_connect, struct socket *sock, struct sockaddr *address, int addrlen)` | Run `check_dest(family, addr, port, SG_HOOK_CONNECT)` on the address being connected to. |
-| C | `LSM_PROBE(socket_sendmsg, struct socket *sock, struct msghdr *msg, int size)` | If `msg->msg_name` is non-NULL, the destination is that sockaddr (UDP `sendto`, TCP Fast Open). Otherwise use the connected peer from `sock->sk->__sk_common` (`skc_family`, `skc_daddr` / `skc_v6_daddr`, `skc_dport`). Unconnected with no address → return 0. Then `check_dest(...)`. |
+| B | `LSM_PROBE(socket_connect, struct socket *sock, struct sockaddr *address, int addrlen)` | Run `check_dest(family, addr, port, SG_HOOK_CONNECT)` on the address being connected to. Hook B is the only hook that emits `ALLOW`. |
+| C | `LSM_PROBE(socket_sendmsg, struct socket *sock, struct msghdr *msg, int size)` | If `msg->msg_name` is non-NULL, the destination is that sockaddr (UDP `sendto`, TCP Fast Open). Otherwise use the connected peer from `sock->sk->__sk_common` (`skc_family`, `skc_daddr` / `skc_v6_daddr`, `skc_dport`). Unconnected with no address → return 0. Then `check_dest(...)`. Never emits `ALLOW`: an allowed send is silent; a disallowed one emits `WOULD_BLOCK` or `BLOCK`. |
 | D | `RAW_TRACEPOINT_PROBE(sched_process_fork)` | `parent = ctx->args[0]`, `child = ctx->args[1]` (`struct task_struct *`). Read `parent->tgid` and `child->tgid`. If they differ (a new process, not a thread) and the parent tgid is in `tagged`, insert `tagged[child_tgid] = {now, parent.ino, parent_tgid}` and emit `TAG_INHERIT`. |
 | E | `TRACEPOINT_PROBE(sched, sched_process_exit)` | `pid_tgid = bpf_get_current_pid_tgid()`. If `pid == tgid` (thread-group leader) and the tgid is in `tagged`, delete it and emit `UNTAG`. |
 
@@ -281,7 +281,7 @@ check_dest(family, addr, port, hook):
     tag  = tagged.lookup(tgid);  if !tag → return 0           # fast path: untagged
     if family == AF_INET6 and addr is ::ffff:a.b.c.d → family = AF_INET, addr = a.b.c.d
     if family not in {AF_INET, AF_INET6} → return 0           # AF_UNIX etc. are a known gap
-    if allow_v4/allow_v6 LPM lookup (prefixlen 32/128) hits → emit ALLOW; return 0
+    if allow_v4/allow_v6 LPM lookup (prefixlen 32/128) hits → emit ALLOW only if hook == SG_HOOK_CONNECT; return 0
     if cfg.mode == AUDIT → emit WOULD_BLOCK; return 0
     emit BLOCK; return -EPERM
 ```
@@ -316,7 +316,7 @@ allow = [
 ]
 ```
 
-Parsing (`guard/policy.py`): use `tomllib`. Validate that `mode` ∈ {audit, enforce}; that every `protect` path is absolute and exists (`os.stat`, which follows symlinks, so we protect the real file); and that every `allow` entry parses with `ipaddress.ip_network(strict=False)`. On any error, print a clear message to stderr and exit 2. A CLI `--mode` flag overrides the file.
+Parsing (`guard/policy.py`): use `tomllib`. Validate that `mode` ∈ {audit, enforce}; that every `protect` path is absolute and exists (`os.stat`, which follows symlinks, so we protect the real file); and that every `allow` entry parses with `ipaddress.ip_network(strict=False)`. On any error, print a clear message to stderr and exit 2. A CLI `--mode` flag overrides the file. A missing `mode` means `audit`. `protect` must be non-empty; `allow` may be empty (a tagged process then reaches nothing, useful for testing). Unknown keys are rejected. Map-size limits are not checked.
 
 ### 5.4 Contract 3: Guard CLI and JSON event schema (stdout of `guard.py`)
 
@@ -326,6 +326,7 @@ sudo python3 guard/guard.py -p policy/policy.toml [--mode audit|enforce] [--debu
 
 - Loads the BPF program, fills `protected_inodes` (`st_ino`), `allow_v4`/`allow_v6` and `config`, emits `READY`, then polls the ring buffer forever.
 - On SIGINT/SIGTERM, exits cleanly. All hooks detach when the process exits; this is the safety valve.
+- Exit codes: `0` clean shutdown on SIGINT/SIGTERM, `2` bad policy, `3` BPF load failure (an `ERROR` event is written to stdout first). `--debug` only adds verbose logging on stderr.
 - **Stdout = one JSON object per line, flushed after each line.** Nothing else goes to stdout.
 
 ```json
@@ -341,7 +342,7 @@ sudo python3 guard/guard.py -p policy/policy.toml [--mode audit|enforce] [--debu
 | `type` | string | `READY` `TAG` `TAG_INHERIT` `ALLOW` `BLOCK` `WOULD_BLOCK` `UNTAG` `ERROR` |
 | `hook` | string or null | `file_open` `connect` `sendmsg` `fork` `exit` |
 | `tgid`, `parent_tgid` | int or null | |
-| `comm` | string | process name |
+| `comm` | string or null | process name; `null` on `READY`/`ERROR`. On `TAG_INHERIT` it is the name at fork time (usually the parent's); consumers must not rely on it |
 | `file` | string or null | protected path resolved from `ino` |
 | `family` | `"ipv4"`/`"ipv6"`/null | |
 | `daddr` | string or null | formatted with `ipaddress` |
@@ -366,9 +367,10 @@ python3 bridge/bridge.py --fake --port 8765        # no kernel, any OS
    "recent":[ ...last 50 events... ]}
   ```
   So a dashboard that restarts mid-demo recovers its full state.
-- `--fake` loops a realistic story every ~10 s: `READY` → `TAG` (python3) → `ALLOW` 127.0.0.1:8080 → `TAG_INHERIT` (curl) → `BLOCK` 192.168.122.1:9999 → `UNTAG`.
+- `--fake` loops a realistic story every ~10 s: `READY` → `TAG` (python3) → `ALLOW` 127.0.0.1:8080 → `TAG_INHERIT` (comm `python3`, the name at fork) → `BLOCK` (comm `curl`) 192.168.122.1:9999 → `UNTAG`.
 - Read-only feed. Ignore messages from clients.
 - Never imports `bcc`. Runs unprivileged.
+- `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running and serves the last state.
 
 ### 5.6 Demo kit (`demo/`, Track D)
 
@@ -385,7 +387,6 @@ python3 bridge/bridge.py --fake --port 8765        # no kernel, any OS
      - `udp`: `sendto`
      - `b64`: base64 then direct
      - `preconnect`: connect to the target *before* step 1, then read `.env`, then send
-     - `ipv6`: connect to an IPv6 target
      - `none`
   4. Prints `BLOCKED by kernel (EPERM)` if it gets `PermissionError`/`EPERM`, and prints any other error verbatim.
   - `--step` waits for Enter between phases (for stage pacing).
@@ -506,13 +507,13 @@ Run all privileged tests inside the VM. Today is 18 Oct 2026; the department rou
 |---|---|---|---|
 | M0 Env | D (everyone runs) | 18 Oct | `scripts/check_env.sh` all PASS; `sudo python3 scripts/lsm_smoke_test.py` exits 0 |
 | M1 Tagging | K + G | 18–19 Oct | Guard starts in audit mode and prints `READY`; `cat demo/project/.env` → `TAG` event for `cat`; `sudo bpftool map dump name tagged` shows the entry |
-| M2 Inheritance & cleanup | K | 19 Oct | `python3 -c "open('demo/project/.env').read(); import subprocess; subprocess.run(['sleep','1'])"` → `TAG` (python3) + `TAG_INHERIT` (sleep); after exit both get `UNTAG` and the map is empty of them |
+| M2 Inheritance & cleanup | K | 19 Oct | `python3 -c "open('demo/project/.env').read(); import subprocess; subprocess.run(['sleep','1'])"` → `TAG` (python3) + `TAG_INHERIT` for the child tgid with `parent_tgid` = the python3 tgid (process name not asserted); after exit both get `UNTAG` and the map is empty of them |
 | M3 Connect enforcement | K + G | 19 Oct | Enforce mode: tagged `agent.py --exfil direct` → `PermissionError` + `BLOCK`; its POST to 127.0.0.1:8080 succeeds with `ALLOW`; an untagged `python3 -c` connect to the attacker succeeds; audit mode → all succeed + `WOULD_BLOCK` |
-| M4 Sendmsg | K | 20 Oct | `--exfil udp` and `--exfil preconnect` blocked with `BLOCK hook=sendmsg`; `--exfil ipv6` blocked |
+| M4 Sendmsg | K | 20 Oct | `--exfil udp` and `--exfil preconnect` blocked with `BLOCK hook=sendmsg` |
 | M5 Live dashboard | G + U | fake: 19 Oct, real: 20 Oct | Electron shows `SNAPSHOT` state on connect; `BLOCK` turns the banner red within 1 s; restarting Electron mid-run recovers state |
 | M6 Attack matrix | D | 20 Oct | `sudo python3 tests/attack_matrix.py --target 192.168.122.1:9999` passes every "Blocked" row in Part 2, plus the untagged-allowed and allowlisted-allowed controls; checks `EPERM` specifically (not just "failed"); attacker log shows 0 bytes |
 | M7 Freeze | all, P leads | 21 Oct | VM snapshot saved; backup video recorded; runbook complete; 3 consecutive cold runs pass |
 | S1 Stretch | K | after M7 | `socket_create` denies `AF_PACKET`/`SOCK_RAW` for tagged processes |
-| S2 Stretch (finale, 26–30 Oct) | K + G | after the department round | `file_permission` hook: a tagged process writing to a pipe/file taints that inode; reading a tainted inode tags the reader. `cat .env \| curl ...` becomes blocked |
+| S2 Stretch (finale, 26–30 Oct) | K | after the department round | `file_permission` hook: a tagged process writing to a pipe/file taints that inode; reading a tainted inode tags the reader. `cat .env \| curl ...` becomes blocked |
 
 When a milestone passes, the owning track commits with the milestone ID in the message (e.g. `feat(kernel): M3 connect enforcement`).

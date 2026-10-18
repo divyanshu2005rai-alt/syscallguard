@@ -57,9 +57,9 @@ Do not edit: `bridge/`, `guard/events.py` (Divyanshu), `guard/guard.py`, `guard/
 
 **The five panels (brief §6.4):**
 
-1. **Status banner.** Calm green "Protected". On `BLOCK`: loud red for 5 s with `BLOCKED: <comm> (PID <tgid>) read <file> → tried <daddr>:<dport>`. On `WOULD_BLOCK` in audit mode: amber.
-2. **Tagged processes.** Live list: comm, PID, file, inherited-from (`parent_tgid`), since.
-3. **Event log.** Newest first, coloured by type.
+1. **Status banner.** Calm green "Protected"; every event type not listed here leaves it green. On `BLOCK`: loud red for 5 s with `BLOCKED: <comm> (PID <tgid>) read <file> → tried <daddr>:<dport>`. On `WOULD_BLOCK` in audit mode: amber. On `ERROR`: red, showing the event's `message` instead of the BLOCKED text. If a field is null, omit that part of the text (no `file` → drop `read <file>`).
+2. **Tagged processes.** Live list: comm, PID, file, inherited-from (`parent_tgid`), since. For inherited entries `comm` is the name at fork (usually the parent's, e.g. `python3` for a curl child); show it as-is.
+3. **Event log.** Newest first, coloured by type. Keep the newest 100 entries.
 4. **Policy panel.** Mode, protected files, allowlist (from `SNAPSHOT`/`READY`).
 5. **Connection indicator.** Bridge connected / reconnecting.
 
@@ -81,6 +81,7 @@ Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 4: Bridge 
 >   ```
 >   So a dashboard that restarts mid-demo recovers its full state.
 > - Read-only feed. Ignore messages from clients.
+> - `--host` defaults to `127.0.0.1` (pass `0.0.0.0` in the VM). A malformed stdin line is skipped and logged to stderr. A repeat `TAG` for an already-tagged tgid keeps its original `since`. Before `READY` arrives, `SNAPSHOT.mode` is `null`. On stdin EOF (guard gone) the bridge keeps running and serves the last state.
 
 Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 3: Guard CLI and JSON event schema"):
 
@@ -97,7 +98,7 @@ Contract excerpt (source of truth: ARCHITECTURE.md, section "Contract 3: Guard C
 | `type` | string | `READY` `TAG` `TAG_INHERIT` `ALLOW` `BLOCK` `WOULD_BLOCK` `UNTAG` `ERROR` |
 | `hook` | string or null | `file_open` `connect` `sendmsg` `fork` `exit` |
 | `tgid`, `parent_tgid` | int or null | |
-| `comm` | string | process name |
+| `comm` | string or null | process name; `null` on `READY`/`ERROR`. On `TAG_INHERIT` it is the name at fork time (usually the parent's); consumers must not rely on it |
 | `file` | string or null | protected path resolved from `ino` |
 | `family` | `"ipv4"`/`"ipv6"`/null | |
 | `daddr` | string or null | formatted with `ipaddress` |
@@ -112,6 +113,8 @@ The `READY` event also carries `"protect": [...]` and `"allow": [...]`. The `ERR
 
 Dashboard side: everything working against `--fake` by 19 Oct; against the real guard in the VM by 20 Oct.
 
+  - [ ] Electron (`^44.9.0`) tested on the stage laptop, before 21 Oct
+
 **Start now:** the renderer in a plain browser, with hand-written JSON, even before `--fake` exists.
 **Blocked by:** Divyanshu's `bridge.py --fake` for live testing (agree to have it on day one).
 **You block:** Suyash and P (rehearsals, backup video, runbook screenshots).
@@ -125,7 +128,7 @@ python3 bridge/bridge.py --fake --port 8765           # terminal 1
 cd dashboard && npm install && npm start               # terminal 2
 ```
 
-Expected: connection indicator shows connected; the policy panel fills from `SNAPSHOT`; within ~10 s the story plays: python3 tagged, an ALLOW to 127.0.0.1:8080, curl tagged with inherited-from, banner red for 5 s on the BLOCK to 192.168.122.1:9999, then UNTAG clears the list.
+Expected: connection indicator shows connected; the policy panel fills from `SNAPSHOT`; within ~10 s the story plays: python3 tagged, an ALLOW to 127.0.0.1:8080, a child tagged with inherited-from (comm `python3`, the name at fork), banner red for 5 s on the BLOCK by `curl` to 192.168.122.1:9999, then UNTAG clears the list.
 
 Acceptance checks:
 
@@ -170,13 +173,10 @@ Start-here prompt to paste to an agent:
 
 ## 9. Open questions
 
-- **What to show for `ALLOW` / `TAG_INHERIT` / `UNTAG` in the banner**: not specified; assumed the banner stays green and they only appear in the log and list.
-- **How many log entries to keep on screen**: not specified (the bridge sends the last 50 on connect).
-- **`ERROR` events**: how prominently to show `message` is not specified.
-- **TAG_INHERIT `comm`** may be the parent's name (e.g. `python3` instead of `curl`) because the fork hook runs before `exec`. See Azaan's open questions. The tagged list might show a misleading name until this is decided.
-- **Banner text when `file` or `daddr` is null**: not specified.
-- **Electron version** is pinned as `^44.9.0` in `package.json` at bootstrap; confirm it runs on the stage laptop.
+- **How long the `ERROR` banner stays red** is not specified (`BLOCK` is 5 s).
+- **Guard-disconnected indicator.** The bridge will mark the guard as disconnected on EOF, but Contract 4 doesn't say how yet. See Divyanshu's bridge file.
 
 ## 10. Work log
 
 - 2026-10-18: file created. Bootstrap only; dashboard files are stubs.
+- 2026-10-18: docs updated with team decisions (TAG_INHERIT name not asserted, hook C emits no ALLOW, native IPv6 dropped, open questions resolved). See docs/shared.md.
