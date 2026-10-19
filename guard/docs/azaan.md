@@ -130,7 +130,7 @@ check_dest(family, addr, port, hook):
 
 ## 6. Your milestones
 
-- [ ] **M1 Tagging** (K + G, 18–19 Oct): Guard starts in audit mode and prints `READY`; `cat demo/project/.env` → `TAG` event for `cat`; `sudo bpftool map dump name tagged` shows the entry
+- [x] **M1 Tagging** (K + G, 18–19 Oct): Guard starts in audit mode and prints `READY`; `cat demo/project/.env` → `TAG` event for `cat`; `sudo bpftool map dump name tagged` shows the entry
 - [ ] **M2 Inheritance & cleanup** (K, 19 Oct): `python3 -c "open('demo/project/.env').read(); import subprocess; subprocess.run(['sleep','1'])"` → `TAG` (python3) + `TAG_INHERIT` for the child tgid with `parent_tgid` = the python3 tgid (process name not asserted); after exit both get `UNTAG` and the map is empty of them
 - [ ] **M3 Connect enforcement** (K + G, 19 Oct): Enforce mode: tagged `agent.py --exfil direct` → `PermissionError` + `BLOCK`; its POST to 127.0.0.1:8080 succeeds with `ALLOW`; an untagged `python3 -c` connect to the attacker succeeds; audit mode → all succeed + `WOULD_BLOCK`
 - [ ] **M4 Sendmsg** (K, 20 Oct): `--exfil udp` and `--exfil preconnect` blocked with `BLOCK hook=sendmsg`
@@ -207,3 +207,5 @@ Start-here prompt to paste to an agent:
 - 2026-10-18: editor/inode issue documented as a known gap; runbook rule added (see docs/shared.md).
 - 2026-10-19: M0 passed in the VM (check_env all PASS, lsm_smoke_test OK, kernel 7.2.10-200.fc44). Box is Suyash's, not ticked here.
 - 2026-10-19: hook A (file_open tagging) and all six Contract 1 maps written; compiles against 7.2.9 headers with -fms-extensions; throwaway loader in scratch/azaan/. M1 acceptance pending in the VM.
+- 2026-10-19: M1 passed in the VM with scratch/azaan/load_hook_a.py: `cat demo/project/.env` → TAG with comm=cat, ino=1532 (matches `stat` and the `protected_inode` map); `tagged` held exactly one entry, for cat's tgid. guard.py `READY` is Track G's half and not a Track K dependency.
+- 2026-10-19: M2 hooks D (sched_process_fork: inherit to new processes only, comm not asserted) and E (sched_process_exit: delete only when pid == tgid) written; event emission moved into a shared `emit()` helper used by A, D and E. Host compile (7.2.9 headers, bcc 0.35.0, non-root) passes clang; verifier and M2 acceptance pending in the VM.
