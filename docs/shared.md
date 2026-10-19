@@ -107,3 +107,9 @@ Template:
 **Who is affected:** Hifza (`guard/guard.py` load call).
 **Action required:** Hifza — load with `cflags=["-I" + <abs path to guard/bpf>, "-fms-extensions"]`.
 **Commit:** feat(kernel): M1 hook A file_open tagging
+
+### 2026-10-20 · Azaan (track K) · contract
+**What changed:** Contract 2 clarified for cases it didn't state. A missing `allow` key is treated as empty. A missing `protect` key is rejected, same as an empty one. `allow` entries must be strings; a non-string entry is rejected (an integer like `5` would otherwise silently become `0.0.0.5/32`). No change to any case the contract already covered.
+**Who is affected:** Hifza (`guard/policy.py` and `test_policy.py`).
+**Action required:** Hifza, check that `policy.py` does all three; the string check on `allow` entries is the one most likely to be missing. Add a test for each.
+**Commit:** contract: clarify Contract 2 edge cases (missing/empty keys, allow entry types)
